@@ -14,6 +14,8 @@ export const Colors = {
     backgroundElement: '#F0F0F3',
     backgroundSelected: '#E0E1E6',
     textSecondary: '#60646C',
+    primary: '#ED2024',     // Gonza Red
+    surface: '#F4F4F4',     // Light card background
   },
   dark: {
     text: '#ffffff',
@@ -21,6 +23,8 @@ export const Colors = {
     backgroundElement: '#212225',
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
+    primary: '#ED2024',     // Gonza Red
+    surface: '#1A1A1A',     // Dark card background
   },
 } as const;
 

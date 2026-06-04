@@ -1,15 +1,55 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+// src/app/_layout.tsx
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
+import { DarkTheme, DefaultTheme, Tabs, ThemeProvider } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { useColorScheme } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { Colors } from '@/constants/theme';
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function RootLayout() {
+  const scheme = useColorScheme();
+  const theme = Colors[scheme === 'dark' ? 'dark' : 'light'];
+
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    // CRITICAL: GestureHandlerRootView must have flex: 1 to fill the screen
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
+        <BottomSheetModalProvider>
+          <Tabs
+            screenOptions={{
+              headerShown: false,
+              tabBarActiveTintColor: theme.primary,
+              tabBarInactiveTintColor: theme.textSecondary,
+              tabBarStyle: {
+                backgroundColor: theme.background,
+                borderTopColor: theme.backgroundElement,
+              },
+            }}>
+
+            <Tabs.Screen
+              name="index"
+              options={{
+                title: 'Schedule',
+                tabBarIcon: ({ color }) => (
+                  <SymbolView name="calendar" size={24} tintColor={color} />
+                ),
+              }}
+            />
+
+            <Tabs.Screen
+              name="clients"
+              options={{
+                title: 'Clients',
+                tabBarIcon: ({ color }) => (
+                  <SymbolView name="person.3.fill" size={24} tintColor={color} />
+                ),
+              }}
+            />
+
+          </Tabs>
+        </BottomSheetModalProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 }
