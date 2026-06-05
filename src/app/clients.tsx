@@ -1,15 +1,15 @@
 // src/app/(tabs)/clients.tsx
-import { BottomSheetBackdrop, BottomSheetModal, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
-import dayjs from 'dayjs';
-import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { BottomSheetBackdrop, BottomSheetModal, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
+import dayjs from 'dayjs';
+import { useFocusEffect } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../utils/supabase';
 
 export default function ClientsScreen() {
@@ -33,8 +33,6 @@ export default function ClientsScreen() {
         (props: any) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} pressBehavior="close" />,
         []
     );
-    console.log(packages, ' packages ')
-    // --- Database Fetching ---
     // --- Database Fetching ---
     const fetchData = async () => {
         setLoading(true); 
@@ -55,7 +53,6 @@ export default function ClientsScreen() {
             console.error("Packages Fet ch Error:", packagesRes.error);
             Alert.alert("Packages Error", packagesRes.error.message);
         } else if (packagesRes.data) {
-            console.log("Fetched packages successfully!:", packagesRes.data.length);
             setPackages(packagesRes.data);
             if (packagesRes.data.length > 0 && !selectedPackageId) {
                 setSelectedPackageId(packagesRes.data[0].id);
@@ -81,9 +78,11 @@ export default function ClientsScreen() {
         setLoading(false);
     };
 
-    useEffect(() => {
-        fetchData();
-    }, []);
+    useFocusEffect(
+        useCallback(() => {
+            fetchData();
+        }, [])
+    );
 
     const filteredClients = useMemo(() => {
         return clients.filter(client =>
@@ -320,7 +319,6 @@ export default function ClientsScreen() {
                     <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Name</ThemedText>
                     <BottomSheetTextInput
                         style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
-                        placeholder="e.g. Apollo Creed"
                         value={fullName}
                         onChangeText={setFullName}
                         placeholderTextColor={theme.textSecondary}
@@ -329,7 +327,6 @@ export default function ClientsScreen() {
                     <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Phone Number</ThemedText>
                     <BottomSheetTextInput
                         style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
-                        placeholder="e.g. 201-250-3670"
                         value={phone}
                         onChangeText={setPhone}
                         keyboardType="phone-pad"

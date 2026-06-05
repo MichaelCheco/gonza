@@ -1,11 +1,10 @@
-// src/app/index.tsx
 import { BottomSheetBackdrop, BottomSheetFlatList, BottomSheetModal, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Keyboard, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, Keyboard, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { CalendarProvider, WeekCalendar } from 'react-native-calendars';
 import { Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,19 +13,25 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { supabase } from '../../utils/supabase';
 
 dayjs.extend(customParseFormat);
 
-const MOCK_CLASSES = [
-  { id: '1', time: '6:00 AM', title: 'Boxing class', type: 'Group' },
-  { id: '2', time: '9:00 AM', title: 'Michael Checo', type: 'Personal Training', clientId: '1' },
-  { id: '3', time: '11:00 AM', title: 'Dmitry Bivol', type: 'Personal Training', clientId: '1' },
-  { id: '4', time: '5:00 PM', title: 'Kids Boxing', type: 'Group' },
-  { id: '5', time: '7:00 PM', title: 'Boxing class', type: 'Group' },
-];
+// Define our session type now that we aren't relying on typeof MOCK_CLASSES
+type SessionType = {
+  id: string;
+  time: string;
+  title: string;
+  type: string;
+  clientId?: string;
+};
 
-const MOCK_CLIENTS = [{ id: '1', name: 'John Doe' }, { id: '2', name: 'Jane Smith' }, { id: '3', name: 'Mike Tyson' }];
-const MOCK_ROSTER = [{ id: '1', name: 'John Doe', status: 'paid', checkedIn: false }, { id: '2', name: 'Jane Smith', status: 'unpaid', checkedIn: false }, { id: '4', name: 'Apollo Creed', status: 'paid', checkedIn: true }];
+// Keeping Roster mock for now until we build step 3
+const MOCK_ROSTER = [
+  { id: '1', name: 'John Doe', status: 'paid', checkedIn: false },
+  { id: '2', name: 'Jane Smith', status: 'unpaid', checkedIn: false },
+  { id: '4', name: 'Apollo Creed', status: 'paid', checkedIn: true }
+];
 
 export default function HomeScreen() {
   const theme = useTheme();
@@ -38,61 +43,278 @@ export default function HomeScreen() {
   const editSnapPoints = useMemo(() => ['60%'], []);
   const rosterSnapPoints = useMemo(() => ['75%'], []);
 
-  const [editingSession, setEditingSession] = useState<typeof MOCK_CLASSES[0] | null>(null);
-  const [selectedGroupClass, setSelectedGroupClass] = useState<typeof MOCK_CLASSES[0] | null>(null);
+  // --- Roster State ---
+  const [rosterData, setRosterData] = useState<any[]>([]);
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [rosterSearchQuery, setRosterSearchQuery] = useState('');
+
+  // For adding walk-ins to the roster
+  const [addWalkInQuery, setAddWalkInQuery] = useState('');
+  // --- Real Database State ---
+  const [classes, setClasses] = useState<SessionType[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [editingSession, setEditingSession] = useState<SessionType | null>(null);
+  const [selectedGroupClass, setSelectedGroupClass] = useState<SessionType | null>(null);
 
   const [clientQuery, setClientQuery] = useState('');
   const [selectedClient, setSelectedClient] = useState<{ id: string, name: string } | null>(null);
   const [sessionTime, setSessionTime] = useState(new Date());
   const [showTimePicker, setShowTimePicker] = useState(false);
 
-  const [rosterData, setRosterData] = useState(MOCK_ROSTER);
-  const [rosterSearchQuery, setRosterSearchQuery] = useState('');
-
   const renderBackdrop = useCallback(
     (props: any) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} pressBehavior="close" />, []
   );
 
+  // --- Fetch Roster for a specific class ---
+  const fetchRoster = async (classId: string) => {
+    setRosterLoading(true);
+    const { data, error } = await supabase
+      .from('attendance')
+      .select(`
+        id,
+        client_id,
+        client_package_id,
+        clients ( id, first_name, last_name )
+      `)
+      .eq('class_id', classId);
+
+    if (error) {
+      Alert.alert("Error fetching roster", error.message);
+    } else if (data) {
+      const formattedRoster = data.map(att => {
+        const clientData = att.clients as any;
+        return {
+          id: att.id.toString(), // The attendance record ID
+          clientId: att.client_id.toString(),
+          name: `${clientData.first_name} ${clientData.last_name}`,
+          // If they have a package ID linked to this attendance, they are checked in
+          checkedIn: !!att.client_package_id,
+        };
+      });
+      setRosterData(formattedRoster);
+    }
+    setRosterLoading(false);
+  };
+
+  // --- Add Walk-in to Roster ---
+  const handleAddWalkIn = async (client: any) => {
+    if (!selectedGroupClass) return;
+
+    const { error } = await supabase.from('attendance').insert({
+      class_id: selectedGroupClass.id,
+      client_id: client.id
+    });
+
+    if (error) {
+      Alert.alert("Error", "Could not add client to roster.");
+    } else {
+      setAddWalkInQuery('');
+      Keyboard.dismiss();
+      fetchRoster(selectedGroupClass.id); // Refresh the roster
+    }
+  };
+
+  // --- 1. Fetch Clients for Autocomplete (Runs once) ---
+  useEffect(() => {
+    const fetchClients = async () => {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, first_name, last_name')
+        .order('first_name');
+
+      if (!error && data) {
+        setClients(data.map(c => ({
+          id: c.id.toString(),
+          name: `${c.first_name} ${c.last_name}`.trim()
+        })));
+      }
+    };
+    fetchClients();
+  }, []);
+
+  // --- 2. Fetch Classes dynamically when selectedDate changes ---
+  const fetchClasses = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('classes')
+      .select(`
+        id,
+        title,
+        class_type,
+        start_time,
+        attendance (
+          client_id,
+          clients (id, first_name, last_name)
+        )
+      `)
+      .eq('scheduled_date', selectedDate)
+      .order('start_time', { ascending: true });
+
+    if (error) {
+      Alert.alert("Error fetching schedule", error.message);
+    } else if (data) {
+      const formatted = data.map(c => {
+        const isPT = c.class_type === 'Personal Training';
+        // Pluck the client data out of the attendance join
+        const firstAttendee = c.attendance?.[0]?.clients as any;
+
+        return {
+          id: c.id.toString(),
+          time: dayjs(`${selectedDate}T${c.start_time}`).format('h:mm A'),
+          title: isPT && firstAttendee ? `${firstAttendee.first_name} ${firstAttendee.last_name}` : c.title,
+          type: c.class_type,
+          clientId: firstAttendee?.id?.toString()
+        };
+      });
+      setClasses(formatted);
+    }
+    setLoading(false);
+  };
+
+  // Re-fetch whenever the calendar date is tapped
+  useEffect(() => {
+    fetchClasses();
+  }, [selectedDate]);
+
   const filteredClients = useMemo(() => {
     if (!clientQuery || selectedClient) return [];
-    return MOCK_CLIENTS.filter(c => c.name.toLowerCase().includes(clientQuery.toLowerCase()));
-  }, [clientQuery, selectedClient]);
+    return clients.filter(c => c.name.toLowerCase().includes(clientQuery.toLowerCase()));
+  }, [clientQuery, selectedClient, clients]);
 
   const filteredRoster = useMemo(() => {
     if (!rosterSearchQuery) return rosterData;
     return rosterData.filter(c => c.name.toLowerCase().includes(rosterSearchQuery.toLowerCase()));
   }, [rosterSearchQuery, rosterData]);
 
-  const handleCardPress = (session: typeof MOCK_CLASSES[0]) => {
+  // --- Action Handlers ---
+  const handleCardPress = (session: SessionType) => {
     if (session.type === 'Group') {
-      setSelectedGroupClass(session); setRosterSearchQuery(''); rosterSheetRef.current?.present();
+      setSelectedGroupClass(session);
+      setRosterSearchQuery('');
+      setAddWalkInQuery('');
+      fetchRoster(session.id); // <-- Fetch real data
+      rosterSheetRef.current?.present();
     } else {
       handlePTCheckIn(session);
     }
   };
 
-  const handlePTCheckIn = (session: typeof MOCK_CLASSES[0]) => Alert.alert("Checked In", `${session.title} has been checked in.`);
-  const toggleRosterCheckIn = (id: string) => setRosterData(curr => curr.map(c => c.id === id ? { ...c, checkedIn: !c.checkedIn } : c));
+  const toggleRosterCheckIn = async (rosterItem: any) => {
+    if (!selectedGroupClass) return;
+
+    if (rosterItem.checkedIn) {
+      return Alert.alert("Notice", "Client is already checked in. Un-doing check-ins requires manual package adjustment in this version.");
+    }
+
+    // Call the RPC we made earlier!
+    const { data: success, error } = await supabase.rpc('process_check_in', {
+      p_class_id: parseInt(selectedGroupClass.id),
+      p_client_id: parseInt(rosterItem.clientId)
+    });
+
+    if (error) {
+      Alert.alert("Error", error.message);
+    } else if (success) {
+      fetchRoster(selectedGroupClass.id); // Refresh to show the green "Checked In" status
+    } else {
+      Alert.alert("Check-in Failed", "This client has no active packages with remaining classes.");
+    }
+  };
+
+  const handlePTCheckIn = async (session: SessionType) => {
+    if (!session.clientId) return;
+
+    // Optional: Add a loading state here if you want UI feedback during the network request
+
+    const { data: success, error } = await supabase.rpc('process_check_in', {
+      p_class_id: parseInt(session.id),
+      p_client_id: parseInt(session.clientId)
+    });
+
+    if (error) {
+      Alert.alert("Check-in Error", error.message);
+    } else if (success) {
+      Alert.alert("Success", `${session.title} has been checked in and 1 class was deducted.`);
+      // Re-fetch classes or trigger a UI update to show they are checked in
+    } else {
+      Alert.alert("Check-in Failed", "This client has no active packages with remaining classes.");
+    }
+  };
 
   const handleAddSession = () => {
     setEditingSession(null); setClientQuery(''); setSelectedClient(null); setSessionTime(new Date()); editSheetRef.current?.present();
   };
 
-  const handleLongPressEdit = (session: typeof MOCK_CLASSES[0]) => {
+  const handleLongPressEdit = (session: SessionType) => {
     setEditingSession(session); setClientQuery(session.title);
-    const clientMatch = MOCK_CLIENTS.find(c => c.id === session.clientId);
+    const clientMatch = clients.find(c => c.id === session.clientId);
     if (clientMatch) setSelectedClient(clientMatch);
     setSessionTime(dayjs(`${selectedDate} ${session.time}`, 'YYYY-MM-DD h:mm A').toDate());
     editSheetRef.current?.present();
   };
 
   const closeEditSheet = () => editSheetRef.current?.dismiss();
-  const handleSave = () => closeEditSheet();
-  const handleDelete = (session: typeof MOCK_CLASSES[0]) => {
-    Alert.alert("Cancel Session", `Remove ${session.title}?`, [{ text: "No", style: "cancel" }, { text: "Yes, Delete", style: "destructive", onPress: () => closeEditSheet() }]);
+
+  // --- 3. Save to Supabase ---
+  const handleSave = async () => {
+    if (!clientQuery && !selectedClient) {
+      return Alert.alert("Error", "Please enter a class title or select a client.");
+    }
+
+    const timeString = dayjs(sessionTime).format('HH:mm:ss');
+    const isPT = !!selectedClient;
+
+    const classData = {
+      title: isPT ? 'PT Session' : clientQuery,
+      class_type: isPT ? 'Personal Training' : 'Group',
+      scheduled_date: selectedDate,
+      start_time: timeString,
+    };
+
+    if (editingSession) {
+      const { error } = await supabase.from('classes').update(classData).eq('id', editingSession.id);
+      if (error) Alert.alert("Update Error", error.message);
+    } else {
+      const { data: newClass, error: classErr } = await supabase.from('classes').insert(classData).select().single();
+      if (classErr) return Alert.alert("Insert Error", classErr.message);
+
+      if (isPT && newClass) {
+        const { error: attendanceErr } = await supabase.from('attendance').insert({
+          class_id: newClass.id,
+          client_id: selectedClient.id,
+        });
+        if (attendanceErr) Alert.alert("Attendance Error", attendanceErr.message);
+      }
+    }
+
+    fetchClasses();
+    closeEditSheet();
   };
 
-  const renderLeftActions = (item: typeof MOCK_CLASSES[0]) => {
+  // --- 4. Delete from Supabase ---
+  const handleDelete = (session: SessionType) => {
+    Alert.alert("Cancel Session", `Remove ${session.title}?`, [
+      { text: "No", style: "cancel" },
+      {
+        text: "Yes, Delete",
+        style: "destructive",
+        onPress: async () => {
+          await supabase.from('attendance').delete().eq('class_id', session.id);
+          const { error } = await supabase.from('classes').delete().eq('id', session.id);
+
+          if (error) Alert.alert("Delete Error", error.message);
+          else {
+            fetchClasses();
+            closeEditSheet();
+          }
+        }
+      }
+    ]);
+  };
+
+  const renderLeftActions = (item: SessionType) => {
     if (item.type === 'Group') return null;
     return (
       <TouchableOpacity style={[styles.swipeAction, { backgroundColor: '#28A745', marginRight: Spacing.two }]} onPress={() => handlePTCheckIn(item)} activeOpacity={0.8}>
@@ -101,13 +323,13 @@ export default function HomeScreen() {
     );
   };
 
-  const renderRightActions = (item: typeof MOCK_CLASSES[0]) => (
+  const renderRightActions = (item: SessionType) => (
     <TouchableOpacity style={[styles.swipeAction, { backgroundColor: theme.primary, marginLeft: Spacing.two }]} onPress={() => handleDelete(item)} activeOpacity={0.8}>
       <SymbolView name="trash.fill" size={20} tintColor="#FFFFFF" />
     </TouchableOpacity>
   );
 
-  const renderClassItem = ({ item }: { item: typeof MOCK_CLASSES[0] }) => {
+  const renderClassItem = ({ item }: { item: SessionType }) => {
     const isPT = item.type !== 'Group';
     return (
       <View style={styles.classCardWrapper}>
@@ -171,13 +393,20 @@ export default function HomeScreen() {
         <View style={styles.listContainer}>
           <ThemedText style={styles.listHeader}>{dayjs(selectedDate).format('dddd, MMMM D')}</ThemedText>
           <FlatList
-            data={MOCK_CLASSES} keyExtractor={(item) => item.id} renderItem={renderClassItem}
-            contentContainerStyle={styles.flatListContent} showsVerticalScrollIndicator={false}
+            data={classes}
+            keyExtractor={(item) => item.id}
+            renderItem={renderClassItem}
+            contentContainerStyle={styles.flatListContent}
+            showsVerticalScrollIndicator={false}
             ListEmptyComponent={
-              <TouchableOpacity activeOpacity={0.7} onPress={handleAddSession} style={styles.emptyState}>
-                <SymbolView name="calendar.badge.plus" size={40} tintColor={theme.textSecondary} style={{ marginBottom: Spacing.two }} />
-                <ThemedText themeColor="textSecondary" style={styles.emptyText}>No sessions scheduled.{"\n"}Tap to add one.</ThemedText>
-              </TouchableOpacity>
+              loading ? (
+                <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
+              ) : (
+                <TouchableOpacity activeOpacity={0.7} onPress={handleAddSession} style={styles.emptyState}>
+                  <SymbolView name="calendar.badge.plus" size={40} tintColor={theme.textSecondary} style={{ marginBottom: Spacing.two }} />
+                  <ThemedText themeColor="textSecondary" style={styles.emptyText}>No sessions scheduled.{"\n"}Tap to add one.</ThemedText>
+                </TouchableOpacity>
+              )
             }
           />
         </View>
@@ -190,12 +419,12 @@ export default function HomeScreen() {
       {/* 1. Add / Edit Session Modal */}
       <BottomSheetModal ref={editSheetRef} index={0} snapPoints={editSnapPoints} backdropComponent={renderBackdrop} backgroundStyle={{ backgroundColor: theme.backgroundElement }} handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}>
         <BottomSheetView style={styles.sheetContent}>
-          <ThemedText style={styles.sheetTitle}>{editingSession ? 'Edit Session' : 'Add PT Session'}</ThemedText>
+          <ThemedText style={styles.sheetTitle}>{editingSession ? 'Edit Session' : 'Add Session'}</ThemedText>
 
-          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Client Name</ThemedText>
+          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Client or Group Title</ThemedText>
           <BottomSheetTextInput
             style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
-            placeholder="Search or add new..." placeholderTextColor={theme.textSecondary}
+            placeholder="Search clients" placeholderTextColor={theme.textSecondary}
             value={clientQuery} onChangeText={(text) => { setClientQuery(text); setSelectedClient(null); }}
           />
 
@@ -228,6 +457,7 @@ export default function HomeScreen() {
         </BottomSheetView>
       </BottomSheetModal>
 
+      {/* 2. Group Class Roster Modal (Still Mocked) */}
       {/* 2. Group Class Roster Modal */}
       <BottomSheetModal ref={rosterSheetRef} index={0} snapPoints={rosterSnapPoints} backdropComponent={renderBackdrop} backgroundStyle={{ backgroundColor: theme.backgroundElement }} handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}>
         <BottomSheetView style={styles.sheetContent}>
@@ -236,27 +466,58 @@ export default function HomeScreen() {
             <ThemedText type="small" themeColor="textSecondary">{selectedGroupClass?.time} • Roster</ThemedText>
           </View>
 
+          {/* Add Walk-in Section */}
+          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Add to Roster</ThemedText>
           <BottomSheetTextInput
-            style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background, marginBottom: Spacing.three }]}
-            placeholder="Search roster..." placeholderTextColor={theme.textSecondary}
-            value={rosterSearchQuery} onChangeText={setRosterSearchQuery} clearButtonMode="while-editing"
+            style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
+            placeholder="Search clients to add..." placeholderTextColor={theme.textSecondary}
+            value={addWalkInQuery} onChangeText={setAddWalkInQuery}
           />
 
-          <BottomSheetFlatList
-            data={filteredRoster} keyExtractor={item => item.id} contentContainerStyle={{ paddingBottom: Spacing.six }}
-            ListEmptyComponent={<ThemedText themeColor="textSecondary" style={{ textAlign: 'center', marginTop: Spacing.four }}>No matches found.</ThemedText>}
-            renderItem={({ item }) => (
-              <View style={[styles.rosterRow, { borderBottomColor: theme.surface }]}>
-                <View>
-                  <ThemedText style={[styles.rosterName, item.status === 'unpaid' && { color: theme.primary }]}>{item.name}</ThemedText>
-                  {item.status === 'unpaid' && <ThemedText type="smallBold" style={{ color: theme.primary }}>Unpaid</ThemedText>}
+          {/* Walk-in Autocomplete */}
+          {addWalkInQuery.length > 0 && (
+            <View style={[styles.autocompleteContainer, { backgroundColor: theme.surface, borderColor: theme.backgroundElement }]}>
+              <BottomSheetFlatList
+                data={clients.filter(c => c.name.toLowerCase().includes(addWalkInQuery.toLowerCase()))}
+                keyExtractor={(item) => item.id}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => (
+                  <TouchableOpacity style={[styles.autocompleteItem, { borderBottomColor: theme.backgroundElement }]} onPress={() => handleAddWalkIn(item)}>
+                    <ThemedText style={{ fontSize: 15 }}>+ Add {item.name}</ThemedText>
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+          )}
+
+          <View style={[styles.divider, { backgroundColor: theme.surface, marginVertical: Spacing.three }]} />
+
+          {rosterLoading ? (
+            <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 20 }} />
+          ) : (
+            <BottomSheetFlatList
+              data={filteredRoster}
+              keyExtractor={item => item.id}
+              contentContainerStyle={{ paddingBottom: Spacing.six }}
+              ListEmptyComponent={<ThemedText themeColor="textSecondary" style={{ textAlign: 'center', marginTop: Spacing.four }}>Roster is empty.</ThemedText>}
+              renderItem={({ item }) => (
+                <View style={[styles.rosterRow, { borderBottomColor: theme.surface }]}>
+                  <View>
+                    <ThemedText style={styles.rosterName}>{item.name}</ThemedText>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.rosterCheckInBtn, { backgroundColor: item.checkedIn ? '#28A745' : theme.surface }]}
+                    onPress={() => toggleRosterCheckIn(item)}
+                    activeOpacity={item.checkedIn ? 1 : 0.7}
+                  >
+                    <ThemedText style={[styles.rosterCheckInText, item.checkedIn && { color: '#FFF' }]}>
+                      {item.checkedIn ? 'Checked In' : 'Check In'}
+                    </ThemedText>
+                  </TouchableOpacity>
                 </View>
-                <TouchableOpacity style={[styles.rosterCheckInBtn, { backgroundColor: item.checkedIn ? '#28A745' : theme.surface }]} onPress={() => toggleRosterCheckIn(item.id)}>
-                  <ThemedText style={[styles.rosterCheckInText, item.checkedIn && { color: '#FFF' }]}>{item.checkedIn ? 'Checked In' : 'Check In'}</ThemedText>
-                </TouchableOpacity>
-              </View>
-            )}
-          />
+              )}
+            />
+          )}
         </BottomSheetView>
       </BottomSheetModal>
 
