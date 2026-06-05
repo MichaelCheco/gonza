@@ -5,7 +5,7 @@
   "dependencies": {
     "@expo/ui": "~56.0.14",
     "@gorhom/bottom-sheet": "^5.2.14",
-    "@react-native-async-storage/async-storage": "^3.1.1",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/datetimepicker": "^9.1.0",
     "@supabase/supabase-js": "^2.106.2",
     "dayjs": "^1.11.21",
@@ -40,7 +40,7 @@
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint"
