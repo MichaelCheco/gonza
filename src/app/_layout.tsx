@@ -4,6 +4,7 @@ import { DarkTheme, DefaultTheme, Tabs, ThemeProvider, useRouter, useSegments } 
 import { SymbolView } from 'expo-symbols';
 import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
+import 'react-native-gesture-handler';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Colors } from '@/constants/theme';

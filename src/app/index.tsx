@@ -24,6 +24,12 @@ type SessionType = {
   title: string;
   type: string;
   clientId?: string;
+  checkedIn?: boolean;
+};
+
+type CheckInState = {
+  status: 'loading' | 'success' | 'error';
+  message?: string;
 };
 
 // Keeping Roster mock for now until we build step 3
@@ -54,6 +60,7 @@ export default function HomeScreen() {
   const [classes, setClasses] = useState<SessionType[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ptCheckInStates, setPtCheckInStates] = useState<Record<string, CheckInState>>({});
 
   const [editingSession, setEditingSession] = useState<SessionType | null>(null);
   const [selectedGroupClass, setSelectedGroupClass] = useState<SessionType | null>(null);
@@ -145,6 +152,7 @@ export default function HomeScreen() {
         class_type,
         start_time,
         attendance (
+          client_package_id,
           client_id,
           clients (id, first_name, last_name)
         )
@@ -165,10 +173,12 @@ export default function HomeScreen() {
           time: dayjs(`${selectedDate}T${c.start_time}`).format('h:mm A'),
           title: isPT && firstAttendee ? `${firstAttendee.first_name} ${firstAttendee.last_name}` : c.title,
           type: c.class_type,
-          clientId: firstAttendee?.id?.toString()
+          clientId: firstAttendee?.id?.toString(),
+          checkedIn: !!c.attendance?.[0]?.client_package_id
         };
       });
       setClasses(formatted);
+      setPtCheckInStates({});
     }
     setLoading(false);
   };
@@ -224,9 +234,12 @@ export default function HomeScreen() {
   };
 
   const handlePTCheckIn = async (session: SessionType) => {
-    if (!session.clientId) return;
+    if (!session.clientId || session.checkedIn || ptCheckInStates[session.id]?.status === 'loading') return;
 
-    // Optional: Add a loading state here if you want UI feedback during the network request
+    setPtCheckInStates(prev => ({
+      ...prev,
+      [session.id]: { status: 'loading' },
+    }));
 
     const { data: success, error } = await supabase.rpc('process_check_in', {
       p_class_id: parseInt(session.id),
@@ -234,12 +247,21 @@ export default function HomeScreen() {
     });
 
     if (error) {
-      Alert.alert("Check-in Error", error.message);
+      setPtCheckInStates(prev => ({
+        ...prev,
+        [session.id]: { status: 'error', message: 'Check-in error' },
+      }));
     } else if (success) {
-      Alert.alert("Success", `${session.title} has been checked in and 1 class was deducted.`);
-      // Re-fetch classes or trigger a UI update to show they are checked in
+      setClasses(prev => prev.map(item => item.id === session.id ? { ...item, checkedIn: true } : item));
+      setPtCheckInStates(prev => ({
+        ...prev,
+        [session.id]: { status: 'success' },
+      }));
     } else {
-      Alert.alert("Check-in Failed", "This client has no active packages with remaining classes.");
+      setPtCheckInStates(prev => ({
+        ...prev,
+        [session.id]: { status: 'error', message: 'No active package' },
+      }));
     }
   };
 
@@ -331,6 +353,11 @@ export default function HomeScreen() {
 
   const renderClassItem = ({ item }: { item: SessionType }) => {
     const isPT = item.type !== 'Group';
+    const checkInState = ptCheckInStates[item.id];
+    const isCheckingIn = checkInState?.status === 'loading';
+    const isCheckedIn = item.checkedIn || checkInState?.status === 'success';
+    const checkInError = checkInState?.status === 'error' ? checkInState.message : undefined;
+
     return (
       <View style={styles.classCardWrapper}>
         <Swipeable renderLeftActions={() => renderLeftActions(item)} renderRightActions={() => renderRightActions(item)} friction={2}>
@@ -345,8 +372,24 @@ export default function HomeScreen() {
               </View>
               <View style={styles.cardActionContainer}>
                 {isPT ? (
-                  <TouchableOpacity style={[styles.inlineCheckInBtn, { backgroundColor: theme.backgroundElement }]} onPress={() => handlePTCheckIn(item)}>
-                    <ThemedText style={[styles.inlineCheckInText, { color: theme.text }]}>Check In</ThemedText>
+                  <TouchableOpacity
+                    style={[
+                      styles.inlineCheckInBtn,
+                      { backgroundColor: isCheckedIn ? '#28A745' : theme.backgroundElement },
+                      isCheckingIn && styles.inlineCheckInBtnLoading,
+                    ]}
+                    onPress={() => handlePTCheckIn(item)}
+                    activeOpacity={isCheckedIn ? 1 : 0.7}
+                    disabled={isCheckingIn || isCheckedIn}
+                  >
+                    {isCheckingIn ? (
+                      <ActivityIndicator size="small" color={theme.text} />
+                    ) : (
+                      <ThemedText style={[styles.inlineCheckInText, { color: isCheckedIn ? '#FFFFFF' : theme.text }]}>
+                        {isCheckedIn ? 'Checked In' : 'Check In'}
+                      </ThemedText>
+                    )}
+                    {checkInError && <ThemedText style={[styles.inlineCheckInError, { color: theme.primary }]}>{checkInError}</ThemedText>}
                   </TouchableOpacity>
                 ) : (
                   <View style={styles.rosterChevron}>
@@ -446,7 +489,7 @@ export default function HomeScreen() {
             <ThemedText style={{ fontSize: 15 }}>{dayjs(sessionTime).format('h:mm A')}</ThemedText>
           </TouchableOpacity>
           {showTimePicker && (
-            <DateTimePicker value={sessionTime} mode="time" display="spinner" minuteInterval={15} onChange={(e, date) => { if (Platform.OS === 'android') setShowTimePicker(false); if (date) setSessionTime(date); }} textColor={theme.text} />
+            <DateTimePicker value={sessionTime} mode="time" display="spinner" minuteInterval={30} onChange={(e, date) => { if (Platform.OS === 'android') setShowTimePicker(false); if (date) setSessionTime(date); }} textColor={theme.text} />
           )}
 
           <View style={[styles.actionRow, { marginTop: showTimePicker ? Spacing.two : Spacing.four }]}>
@@ -546,8 +589,10 @@ const styles = StyleSheet.create({
   classTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
 
   cardActionContainer: { justifyContent: 'center', alignItems: 'flex-end', minWidth: 60 },
-  inlineCheckInBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: Spacing.two },
+  inlineCheckInBtn: { minWidth: 86, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Spacing.two, alignItems: 'center' },
+  inlineCheckInBtnLoading: { minHeight: 31, justifyContent: 'center' },
   inlineCheckInText: { fontWeight: '600', fontSize: 13 },
+  inlineCheckInError: { maxWidth: 110, marginTop: 4, fontSize: 11, fontWeight: '700', textAlign: 'right' },
   rosterChevron: { flexDirection: 'row', alignItems: 'center' },
   swipeAction: { justifyContent: 'center', alignItems: 'center', width: 70, borderRadius: Spacing.two },
 
