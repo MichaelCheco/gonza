@@ -13,7 +13,7 @@ import {
   sortClientPackages,
   summarizePackagesByService,
 } from '../../utils/gym-logic';
-import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
+import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import dayjs from 'dayjs';
 import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
@@ -605,8 +605,12 @@ export default function ClientsScreen() {
         handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}
         keyboardBlurBehavior="restore"
       >
-        <BottomSheetView style={styles.sheetContent}>
-          <BottomSheetScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetScrollContent}>
+        <BottomSheetScrollView
+          style={styles.sheetScroll}
+          showsVerticalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.sheetScrollContent}
+        >
             <ThemedText style={styles.sheetTitle}>{editingClient ? 'Client Details' : 'New Client'}</ThemedText>
 
             {editingClient && (
@@ -705,8 +709,7 @@ export default function ClientsScreen() {
             <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave} activeOpacity={0.8}>
               <ThemedText style={styles.saveButtonText}>{editingClient ? 'Save Details' : 'Create Client'}</ThemedText>
             </TouchableOpacity>
-          </BottomSheetScrollView>
-        </BottomSheetView>
+        </BottomSheetScrollView>
       </BottomSheetModal>
     </ThemedView>
   );
@@ -762,8 +765,8 @@ const styles = StyleSheet.create({
   skeletonLineMedium: { width: 52, height: 12, borderRadius: 4 },
   fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
 
-  sheetContent: { flex: 1, padding: Spacing.four, paddingTop: Spacing.two },
-  sheetScrollContent: { paddingBottom: Spacing.four },
+  sheetScroll: { flex: 1 },
+  sheetScrollContent: { paddingHorizontal: Spacing.four, paddingTop: Spacing.two, paddingBottom: 40 },
   sheetTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.three },
   sheetSummary: { borderWidth: 1, borderRadius: 8, padding: 14, gap: Spacing.two, marginBottom: Spacing.three },
   sheetSummaryHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
