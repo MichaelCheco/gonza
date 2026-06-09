@@ -13,7 +13,7 @@ import {
   sortClientPackages,
   summarizePackagesByService,
 } from '../../utils/gym-logic';
-import { BottomSheetBackdrop, BottomSheetModal, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
+import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
 import dayjs from 'dayjs';
 import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
@@ -343,17 +343,18 @@ export default function ClientsScreen() {
   const renderServiceTile = (summary: ServiceSummary, compact = false) => {
     const hasPackage = summary.totalCount > 0;
     const palette = getStatusPalette(summary);
-    const value = hasPackage ? (summary.usableClasses > 0 ? `${summary.usableClasses}` : summary.reason) : 'None';
-    const caption = hasPackage && summary.usableClasses > 0 ? 'left' : summary.label;
+    const shouldShowZero = compact && hasPackage && summary.usableClasses === 0 && summary.unpaidCount === 0;
+    const value = hasPackage ? (summary.usableClasses > 0 ? `${summary.usableClasses}` : shouldShowZero ? '0' : summary.reason) : 'None';
+    const caption = hasPackage && (summary.usableClasses > 0 || shouldShowZero) ? 'left' : summary.label;
 
     return (
       <View key={summary.serviceType} style={[styles.serviceTile, compact && styles.serviceTileCompact]}>
         <View style={[styles.serviceTileAccent, { backgroundColor: palette.border }]} />
-        <View style={styles.serviceTileHeader}>
+        <View style={[styles.serviceTileHeader, compact && styles.serviceTileHeaderCompact]}>
           <ThemedText style={[styles.serviceTileLabel, { color: palette.text }]}>{summary.label}</ThemedText>
           {summary.needsAttention && palette.icon && <SymbolView name={palette.icon} size={13} tintColor={palette.border} />}
         </View>
-        <View style={styles.serviceTileValueRow}>
+        <View style={[styles.serviceTileValueRow, compact && styles.serviceTileValueRowCompact]}>
           <ThemedText style={[compact ? styles.serviceTileValueCompact : styles.serviceTileValue, { color: palette.text }]}>
             {value}
           </ThemedText>
@@ -487,6 +488,7 @@ export default function ClientsScreen() {
 
   const renderClientCard = ({ item }: { item: ClientRecord }) => {
     const attention = getClientAttention(item);
+    const attentionLabel = attention.type === 'noCredits' ? 'No credits' : attention.reason;
     const visibleSummaries = getVisiblePackageSummaries(item);
 
     return (
@@ -498,22 +500,18 @@ export default function ClientsScreen() {
               <ThemedText themeColor="textSecondary" style={styles.clientPhone}>{item.phone || 'No phone added'}</ThemedText>
             </View>
             {!attention.active && (
-              <SymbolView name="exclamationmark.triangle.fill" size={20} tintColor={theme.primary} />
+              <View style={[styles.attentionPill, { backgroundColor: theme.backgroundElement, borderColor: theme.primary }]}>
+                <SymbolView name="exclamationmark.triangle.fill" size={12} tintColor={theme.primary} />
+                <ThemedText style={[styles.attentionPillText, { color: theme.primary }]}>
+                  {attentionLabel}
+                </ThemedText>
+              </View>
             )}
           </View>
 
-          <View style={[styles.serviceTileRow, { borderTopColor: theme.backgroundElement }]}>
+          <View style={styles.serviceTileRow}>
             {visibleSummaries.map((summary) => renderServiceTile(summary, true))}
           </View>
-
-          {!attention.active && (
-            <View style={styles.attentionRow}>
-              <SymbolView name="exclamationmark.triangle.fill" size={13} tintColor={theme.primary} />
-              <ThemedText style={[styles.statusText, { color: theme.primary }]}>
-                {attention.reason}
-              </ThemedText>
-            </View>
-          )}
         </ThemedView>
       </TouchableOpacity>
     );
@@ -525,7 +523,6 @@ export default function ClientsScreen() {
         <ThemedView key={item} type="surface" style={styles.skeletonCard}>
           <View style={[styles.skeletonLineLarge, { backgroundColor: theme.backgroundElement }]} />
           <View style={[styles.skeletonLineSmall, { backgroundColor: theme.backgroundElement }]} />
-          <View style={[styles.skeletonDivider, { backgroundColor: theme.backgroundElement }]} />
           <View style={styles.skeletonBalanceRow}>
             <View style={styles.skeletonBalance}>
               <View style={[styles.skeletonAccent, { backgroundColor: theme.backgroundSelected }]} />
@@ -567,7 +564,12 @@ export default function ClientsScreen() {
           />
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterScrollContainer}
+          contentContainerStyle={styles.filterScroll}
+        >
           {renderFilterChip('all', 'All', clientMetrics.total)}
           {renderFilterChip('attention', 'Attention', clientMetrics.attention)}
           {renderFilterChip('unpaid', 'Unpaid', clientMetrics.unpaid)}
@@ -604,7 +606,7 @@ export default function ClientsScreen() {
         keyboardBlurBehavior="restore"
       >
         <BottomSheetView style={styles.sheetContent}>
-          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetScrollContent}>
+          <BottomSheetScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetScrollContent}>
             <ThemedText style={styles.sheetTitle}>{editingClient ? 'Client Details' : 'New Client'}</ThemedText>
 
             {editingClient && (
@@ -703,7 +705,7 @@ export default function ClientsScreen() {
             <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave} activeOpacity={0.8}>
               <ThemedText style={styles.saveButtonText}>{editingClient ? 'Save Details' : 'Create Client'}</ThemedText>
             </TouchableOpacity>
-          </ScrollView>
+          </BottomSheetScrollView>
         </BottomSheetView>
       </BottomSheetModal>
     </ThemedView>
@@ -720,43 +722,44 @@ const styles = StyleSheet.create({
   searchContainer: { flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: 10, borderRadius: Spacing.two, marginBottom: Spacing.three },
   searchIcon: { marginRight: Spacing.two },
   searchInput: { flex: 1, fontSize: 15, fontWeight: '500', padding: 0 },
-  filterScroll: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.three, gap: Spacing.two },
-  filterChip: { borderWidth: 1, minHeight: 34, borderRadius: 17, paddingLeft: 12, paddingRight: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  filterChipText: { fontSize: 13, fontWeight: '800' },
+  filterScrollContainer: { height: 46, flexGrow: 0, flexShrink: 0 },
+  filterScroll: { height: 34, paddingHorizontal: Spacing.three, gap: Spacing.two, alignItems: 'center' },
+  filterChip: { borderWidth: 1, height: 34, maxHeight: 34, borderRadius: 17, paddingLeft: 12, paddingRight: 6, flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 8 },
+  filterChipText: { fontSize: 13, lineHeight: 16, fontWeight: '800' },
   filterCountPill: { minWidth: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
-  filterCountText: { fontSize: 12, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  filterCountText: { fontSize: 12, lineHeight: 14, fontWeight: '900', fontVariant: ['tabular-nums'] },
 
   listContent: { paddingHorizontal: Spacing.three, paddingBottom: 100 },
-  clientCard: { padding: 16, borderRadius: 8, marginBottom: 12, gap: 12, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
-  clientCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: Spacing.three },
+  clientCard: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, marginBottom: 8, gap: 8, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
+  clientCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
   clientIdentity: { flex: 1 },
-  clientName: { fontSize: 17, fontWeight: '700', marginBottom: 2 },
-  clientPhone: { fontSize: 14, fontWeight: '500' },
+  clientName: { fontSize: 16, lineHeight: 20, fontWeight: '700' },
+  clientPhone: { fontSize: 12, lineHeight: 16, fontWeight: '500' },
+  attentionPill: { flexShrink: 0, maxWidth: 124, minHeight: 28, borderWidth: 1, borderRadius: 14, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  attentionPillText: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
 
-  serviceTileRow: { flexDirection: 'row', gap: Spacing.three, borderTopWidth: 1, paddingTop: Spacing.two },
-  serviceTile: { flex: 1, minHeight: 42, paddingLeft: 10, paddingVertical: 2, justifyContent: 'center', overflow: 'hidden' },
-  serviceTileCompact: { minHeight: 38 },
-  serviceTileAccent: { position: 'absolute', left: 0, top: 4, bottom: 4, width: 3, borderRadius: 2 },
+  serviceTileRow: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap' },
+  serviceTile: { flex: 1, minWidth: 112, minHeight: 42, paddingLeft: 10, paddingVertical: 2, justifyContent: 'center', overflow: 'hidden' },
+  serviceTileCompact: { minHeight: 28, paddingLeft: 8, paddingVertical: 0 },
+  serviceTileAccent: { position: 'absolute', left: 0, top: 5, bottom: 5, width: 3, borderRadius: 2 },
   serviceTileHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  serviceTileHeaderCompact: { justifyContent: 'flex-start', gap: 5 },
   serviceTileLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0 },
   serviceTileValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5, flexWrap: 'wrap' },
+  serviceTileValueRowCompact: { marginTop: -1 },
   serviceTileValue: { fontSize: 19, lineHeight: 23, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  serviceTileValueCompact: { fontSize: 17, lineHeight: 21, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  serviceTileCaption: { fontSize: 12, fontWeight: '600' },
-  statusText: { fontSize: 12, fontWeight: '700' },
-  attentionRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-
+  serviceTileValueCompact: { fontSize: 15, lineHeight: 18, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  serviceTileCaption: { fontSize: 11, fontWeight: '600' },
   emptyText: { textAlign: 'center', marginTop: Spacing.five },
-  skeletonList: { gap: 12 },
-  skeletonCard: { padding: 16, borderRadius: 8, gap: 8, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
-  skeletonLineLarge: { width: '48%', height: 18, borderRadius: 4 },
-  skeletonLineSmall: { width: '34%', height: 14, borderRadius: 4 },
-  skeletonDivider: { height: 1, marginTop: Spacing.two },
-  skeletonBalanceRow: { flexDirection: 'row', gap: Spacing.three, paddingTop: Spacing.two },
-  skeletonBalance: { flex: 1, minHeight: 38, paddingLeft: 10, justifyContent: 'center', gap: 6 },
+  skeletonList: { gap: 8 },
+  skeletonCard: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, gap: 7, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
+  skeletonLineLarge: { width: '45%', height: 16, borderRadius: 4 },
+  skeletonLineSmall: { width: '30%', height: 12, borderRadius: 4 },
+  skeletonBalanceRow: { flexDirection: 'row', gap: Spacing.two },
+  skeletonBalance: { flex: 1, minHeight: 28, paddingLeft: 8, justifyContent: 'center', gap: 4 },
   skeletonAccent: { position: 'absolute', left: 0, top: 4, bottom: 4, width: 3, borderRadius: 2 },
-  skeletonLineTiny: { width: 42, height: 10, borderRadius: 4 },
-  skeletonLineMedium: { width: 58, height: 16, borderRadius: 4 },
+  skeletonLineTiny: { width: 38, height: 8, borderRadius: 4 },
+  skeletonLineMedium: { width: 52, height: 12, borderRadius: 4 },
   fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
 
   sheetContent: { flex: 1, padding: Spacing.four, paddingTop: Spacing.two },
