@@ -1,8 +1,18 @@
-// src/app/(tabs)/clients.tsx
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import {
+  calculateExpirationDateFromPackage,
+  ClientPackageRow,
+  getClientPackageStatus,
+  getServiceLabel,
+  PackageRow,
+  SERVICE_TYPES,
+  ServiceSummary,
+  sortClientPackages,
+  summarizePackagesByService,
+} from '../../utils/gym-logic';
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
 import dayjs from 'dayjs';
 import { useFocusEffect } from 'expo-router';
@@ -12,423 +22,744 @@ import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, TextInput, 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../utils/supabase';
 
+type ClientRecord = {
+  id: number;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  name: string;
+  client_packages: ClientPackageRow[];
+  packageSummaries: ServiceSummary[];
+};
+
+const SERVICE_ORDER = [SERVICE_TYPES.GROUP, SERVICE_TYPES.PERSONAL_TRAINING];
+type ClientFilter = 'all' | 'attention' | 'unpaid' | 'noCredits';
+
 export default function ClientsScreen() {
-    const theme = useTheme();
+  const theme = useTheme();
 
-    const [searchQuery, setSearchQuery] = useState('');
-    const [clients, setClients] = useState<any[]>([]);
-    const [packages, setPackages] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeFilter, setActiveFilter] = useState<ClientFilter>('all');
+  const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [packages, setPackages] = useState<PackageRow[]>([]);
+  const [loading, setLoading] = useState(true);
 
-    const [editingClient, setEditingClient] = useState<any | null>(null);
-    const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null);
+  const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
+  const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null);
 
-    const [fullName, setFullName] = useState('');
-    const [phone, setPhone] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
 
-    const bottomSheetModalRef = useRef<BottomSheetModal>(null);
-    const snapPoints = useMemo(() => ['70%'], []);
+  const bottomSheetModalRef = useRef<BottomSheetModal>(null);
+  const snapPoints = useMemo(() => ['85%'], []);
 
-    const renderBackdrop = useCallback(
-        (props: any) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} pressBehavior="close" />,
-        []
+  const renderBackdrop = useCallback(
+    (props: any) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} pressBehavior="close" />,
+    []
+  );
+
+  const decorateClient = useCallback((client: any): ClientRecord => {
+    const ledger = sortClientPackages((client.client_packages || []) as ClientPackageRow[]);
+
+    return {
+      ...client,
+      name: `${client.first_name} ${client.last_name}`.trim(),
+      client_packages: ledger,
+      packageSummaries: SERVICE_ORDER.map((serviceType) => summarizePackagesByService(ledger, serviceType)),
+    };
+  }, []);
+
+  const fetchData = useCallback(async (focusedClientId?: number) => {
+    setLoading(true);
+
+    const [clientsRes, packagesRes] = await Promise.all([
+      supabase
+        .from('clients')
+        .select(`
+          id, first_name, last_name, phone,
+          client_packages (
+            id, client_id, package_id, classes_remaining, start_date, expiration_date, payment_status,
+            packages ( id, name, price, total_classes, expires_in_weeks, service_type )
+          )
+        `)
+        .order('first_name', { ascending: true }),
+      supabase
+        .from('packages')
+        .select('id, name, price, total_classes, expires_in_weeks, service_type')
+        .order('service_type', { ascending: true })
+        .order('id', { ascending: true }),
+    ]);
+
+    if (packagesRes.error) {
+      console.error('Packages Fetch Error:', packagesRes.error);
+      Alert.alert('Packages Error', packagesRes.error.message);
+    } else if (packagesRes.data) {
+      const packageRows = packagesRes.data as PackageRow[];
+      setPackages(packageRows);
+      setSelectedPackageId((currentId) => {
+        if (currentId && packageRows.some((pkg) => pkg.id === currentId)) return currentId;
+        return packageRows[0]?.id ?? null;
+      });
+    }
+
+    if (clientsRes.error) {
+      console.error('Clients Fetch Error:', clientsRes.error);
+      Alert.alert('Clients Error', clientsRes.error.message);
+    } else if (clientsRes.data) {
+      const processedClients = clientsRes.data.map(decorateClient);
+      setClients(processedClients);
+
+      if (focusedClientId) {
+        const refreshedClient = processedClients.find((client) => client.id === focusedClientId) ?? null;
+        setEditingClient(refreshedClient);
+      }
+    }
+
+    setLoading(false);
+  }, [decorateClient]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
+
+  const getClientAttention = useCallback((client: ClientRecord) => {
+    const hasUnpaid = client.client_packages.some((clientPackage) => clientPackage.payment_status === 'unpaid');
+    const hasUsableCredits = client.packageSummaries.some((summary) => summary.usableClasses > 0);
+    const hasPackageHistory = client.client_packages.length > 0;
+
+    if (hasUnpaid) return { active: false, reason: 'Unpaid balance', type: 'unpaid' as const };
+    if (!hasUsableCredits) return { active: false, reason: hasPackageHistory ? 'No usable credits' : 'No packages', type: 'noCredits' as const };
+
+    return { active: true, reason: 'Good to go', type: 'good' as const };
+  }, []);
+
+  const clientMetrics = useMemo(() => {
+    return clients.reduce(
+      (acc, client) => {
+        const attention = getClientAttention(client);
+        acc.total += 1;
+        if (!attention.active) acc.attention += 1;
+        if (attention.type === 'unpaid') acc.unpaid += 1;
+        if (attention.type === 'noCredits') acc.noCredits += 1;
+        return acc;
+      },
+      { total: 0, attention: 0, unpaid: 0, noCredits: 0 }
     );
-    // --- Database Fetching ---
-    const fetchData = async () => {
-        setLoading(true); 
+  }, [clients, getClientAttention]);
 
-        const [clientsRes, packagesRes] = await Promise.all([
-            supabase.from('clients').select(`
-                id, first_name, last_name, phone,
-                client_packages (
-                    id, classes_remaining, expiration_date, payment_status, package_id,
-                    packages ( name, total_classes, expires_in_weeks )
-                )
-            `).order('first_name', { ascending: true }),
-            supabase.from('packages').select('*').order('id', { ascending: true })
-        ]);
+  const filteredClients = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
 
-        // Log any errors fetching packages
-        if (packagesRes.error) {
-            console.error("Packages Fet ch Error:", packagesRes.error);
-            Alert.alert("Packages Error", packagesRes.error.message);
-        } else if (packagesRes.data) {
-            setPackages(packagesRes.data);
-            if (packagesRes.data.length > 0 && !selectedPackageId) {
-                setSelectedPackageId(packagesRes.data[0].id);
-            }
-        }
+    return clients.filter((client) => {
+      const matchesSearch = !normalizedQuery || client.name.toLowerCase().includes(normalizedQuery);
+      const attention = getClientAttention(client);
 
-        // Log any errors fetching clients
-        if (clientsRes.error) {
-            console.error("Clients Fetch Error:", clientsRes.error);
-            Alert.alert("Clients Error", clientsRes.error.message);
-        } else if (clientsRes.data) {
-            const processedClients = clientsRes.data.map(client => {
-                const sortedPackages = (client.client_packages as any[] || []).sort((a, b) => b.id - a.id);
-                return {
-                    ...client,
-                    name: `${client.first_name} ${client.last_name}`.trim(),
-                    activePackage: sortedPackages[0] || null
-                };
-            });
-            setClients(processedClients);
-        }
+      if (!matchesSearch) return false;
+      if (activeFilter === 'attention') return !attention.active;
+      if (activeFilter === 'unpaid') return attention.type === 'unpaid';
+      if (activeFilter === 'noCredits') return attention.type === 'noCredits';
 
-        setLoading(false);
+      return true;
+    });
+  }, [activeFilter, searchQuery, clients, getClientAttention]);
+
+  const packagesByService = useMemo(() => {
+    return SERVICE_ORDER.map((serviceType) => ({
+      serviceType,
+      label: getServiceLabel(serviceType),
+      packages: packages.filter((pkg) => pkg.service_type === serviceType),
+    }));
+  }, [packages]);
+
+  const selectedPackage = useMemo(() => {
+    return packages.find((pkg) => pkg.id === selectedPackageId) ?? null;
+  }, [packages, selectedPackageId]);
+
+  const getVisiblePackageSummaries = (client: ClientRecord) => {
+    return client.packageSummaries.filter((summary) => {
+      if (summary.serviceType === SERVICE_TYPES.PERSONAL_TRAINING) return summary.totalCount > 0;
+      return true;
+    });
+  };
+
+  const buildClientPackageInsert = (clientId: number, pkg: PackageRow) => {
+    const startDate = dayjs().format('YYYY-MM-DD');
+
+    return {
+      client_id: clientId,
+      package_id: pkg.id,
+      classes_remaining: pkg.total_classes,
+      start_date: startDate,
+      expiration_date: calculateExpirationDateFromPackage(pkg, startDate),
+      payment_status: 'unpaid',
     };
+  };
 
-    useFocusEffect(
-        useCallback(() => {
-            fetchData();
-        }, [])
+  const handleAddClient = () => {
+    setEditingClient(null);
+    setFullName('');
+    setPhone('');
+    setSelectedPackageId(packages[0]?.id ?? null);
+    bottomSheetModalRef.current?.present();
+  };
+
+  const handleClientPress = (client: ClientRecord) => {
+    setEditingClient(client);
+    setFullName(client.name);
+    setPhone(client.phone || '');
+    setSelectedPackageId(packages[0]?.id ?? null);
+    bottomSheetModalRef.current?.present();
+  };
+
+  const closeBottomSheet = () => bottomSheetModalRef.current?.dismiss();
+
+  const handleAddPackage = (packageOverride?: PackageRow) => {
+    const packageToAdd = packageOverride ?? selectedPackage;
+    if (!editingClient || !packageToAdd) return;
+
+    Alert.alert(
+      'Add Package',
+      `Add ${packageToAdd.name} to ${editingClient.name}?\n\nCredits: ${packageToAdd.total_classes}\nExpires: ${
+        packageToAdd.expires_in_weeks ? `${packageToAdd.expires_in_weeks} weeks` : 'Never'
+      }\nPayment: Unpaid`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Add Package',
+          onPress: async () => {
+            const { error } = await supabase.from('client_packages').insert(buildClientPackageInsert(editingClient.id, packageToAdd));
+
+            if (error) Alert.alert('Database Error', error.message);
+            else fetchData(editingClient.id);
+          },
+        },
+      ]
     );
+  };
 
-    const filteredClients = useMemo(() => {
-        return clients.filter(client =>
-            client.name.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-    }, [searchQuery, clients]);
+  const handleMarkPaid = async (clientPackageId: number) => {
+    if (!editingClient) return;
 
-    // --- Action Handlers ---
-    const handleAddClient = () => {
-        setEditingClient(null);
-        setFullName('');
-        setPhone('');
-        if (packages.length > 0) setSelectedPackageId(packages[0].id);
-        bottomSheetModalRef.current?.present();
+    const { error } = await supabase
+      .from('client_packages')
+      .update({ payment_status: 'paid' })
+      .eq('id', clientPackageId);
+
+    if (error) Alert.alert('Database Error', error.message);
+    else fetchData(editingClient.id);
+  };
+
+  const handleSave = async () => {
+    const trimmedName = fullName.trim();
+    if (!trimmedName) return Alert.alert('Error', 'Please enter a name.');
+
+    const [firstName, ...lastNameArr] = trimmedName.split(/\s+/);
+    const lastName = lastNameArr.join(' ');
+
+    if (editingClient) {
+      const { error } = await supabase
+        .from('clients')
+        .update({ first_name: firstName, last_name: lastName, phone })
+        .eq('id', editingClient.id);
+
+      if (error) Alert.alert('Error', error.message);
+      else {
+        await fetchData(editingClient.id);
+        closeBottomSheet();
+      }
+
+      return;
+    }
+
+    if (!selectedPackage) return Alert.alert('Error', 'Please select a package.');
+
+    const { data: newClient, error: clientErr } = await supabase
+      .from('clients')
+      .insert({ first_name: firstName, last_name: lastName, phone })
+      .select()
+      .single();
+
+    if (clientErr) return Alert.alert('Error', clientErr.message);
+
+    const { error: pkgErr } = await supabase
+      .from('client_packages')
+      .insert(buildClientPackageInsert(newClient.id, selectedPackage));
+
+    if (pkgErr) Alert.alert('Error', pkgErr.message);
+    else {
+      await fetchData();
+      closeBottomSheet();
+    }
+  };
+
+  const getStatusPalette = (summary: ServiceSummary) => {
+    const hasPackage = summary.totalCount > 0;
+    const isUnpaid = summary.unpaidCount > 0;
+    const isEmpty = !hasPackage || summary.usableClasses === 0;
+
+    if (isUnpaid) {
+      return {
+        background: theme.background,
+        border: '#D97706',
+        text: theme.text,
+        muted: theme.textSecondary,
+        icon: 'dollarsign.circle.fill' as const,
+      };
+    }
+
+    if (isEmpty) {
+      return {
+        background: theme.background,
+        border: theme.primary,
+        text: theme.text,
+        muted: theme.textSecondary,
+        icon: 'exclamationmark.triangle.fill' as const,
+      };
+    }
+
+    return {
+      background: theme.background,
+      border: theme.backgroundSelected,
+      text: theme.text,
+      muted: theme.textSecondary,
+      icon: null,
     };
- 
-    const handleClientPress = (client: any) => {
-        setEditingClient(client);
-        setFullName(client.name);
-        setPhone(client.phone || '');
-        if (client.activePackage) setSelectedPackageId(client.activePackage.package_id);
-        bottomSheetModalRef.current?.present();
-    };
+  };
 
-    const closeBottomSheet = () => bottomSheetModalRef.current?.dismiss();
-
-    const handleRenew = async () => {
-        if (!editingClient || !selectedPackageId) return;
-
-        const pkg = packages.find(p => p.id === selectedPackageId);
-        if (!pkg) return;
-
-        let expDate = null;
-        if (pkg.expires_in_weeks) {
-            expDate = dayjs().add(pkg.expires_in_weeks, 'week').format('YYYY-MM-DD');
-        }
-
-        const isSwitching = editingClient.activePackage?.package_id !== selectedPackageId;
-
-        Alert.alert(
-            isSwitching ? "Change Package & Renew" : "Confirm Renewal",
-            `Renew ${editingClient.name} with a ${pkg.name}?\n\nClasses: +${pkg.total_classes}\nExpires: ${expDate ? dayjs(expDate).format('MMM D, YYYY') : 'Never'}`,
-            [
-                { text: "Cancel", style: "cancel" },
-                {
-                    text: "Renew & Mark Unpaid", onPress: async () => {
-                        const { error } = await supabase.from('client_packages').insert({
-                            client_id: editingClient.id,
-                            package_id: pkg.id,
-                            classes_remaining: pkg.total_classes,
-                            expiration_date: expDate,
-                            payment_status: 'unpaid' // Default to unpaid until they hand over the cash/Venmo
-                        });
-
-                        if (error) Alert.alert("Database Error", error.message);
-                        else {
-                            fetchData();
-                            closeBottomSheet();
-                        }
-                    }
-                }
-            ]
-        );
-    };
-
-    const handleMarkPaid = async () => {
-        if (!editingClient || !editingClient.activePackage) return;
-
-        const { error } = await supabase.from('client_packages')
-            .update({ payment_status: 'paid' })
-            .eq('id', editingClient.activePackage.id);
-
-        if (error) Alert.alert("Database Error", error.message);
-        else {
-            fetchData();
-            closeBottomSheet();
-        }
-    };
-
-    const handleSave = async () => {
-        if (!fullName) return Alert.alert("Error", "Please enter a name.");
-
-        // UX Magic: We let the owner type a full name, but we split it for the database
-        const [firstName, ...lastNameArr] = fullName.trim().split(' ');
-        const lastName = lastNameArr.join(' ') || '';
-
-        if (editingClient) {
-            // Update Existing Client
-            const { error } = await supabase.from('clients')
-                .update({ first_name: firstName, last_name: lastName, phone })
-                .eq('id', editingClient.id);
-
-            if (error) Alert.alert("Error", error.message);
-            else {
-                fetchData();
-                closeBottomSheet();
-            }
-        } else {
-            // Create Brand New Client
-            const pkg = packages.find(p => p.id === selectedPackageId);
-            if (!pkg) return Alert.alert("Error", "Please select a package.");
-
-            let expDate = null;
-            if (pkg.expires_in_weeks) {
-                expDate = dayjs().add(pkg.expires_in_weeks, 'week').format('YYYY-MM-DD');
-            }
-
-            // 1. Insert Client
-            const { data: newClient, error: clientErr } = await supabase.from('clients')
-                .insert({ first_name: firstName, last_name: lastName, phone })
-                .select().single();
-
-            if (clientErr) return Alert.alert("Error", clientErr.message);
-
-            // 2. Insert their first Package Ledger
-            const { error: pkgErr } = await supabase.from('client_packages').insert({
-                client_id: newClient.id,
-                package_id: pkg.id,
-                classes_remaining: pkg.total_classes,
-                expiration_date: expDate,
-                payment_status: 'unpaid'
-            });
-
-            if (pkgErr) Alert.alert("Error", pkgErr.message);
-            else {
-                fetchData();
-                closeBottomSheet();
-            }
-        }
-    };
-
-    // --- Dynamic Status Engine ---
-    const getStatus = (activePackage: any) => {
-        if (!activePackage) return { active: false, reason: 'No Active Package' };
-        if (activePackage.payment_status === 'unpaid') return { active: false, reason: 'Unpaid Balance' };
-        if (activePackage.classes_remaining <= 0) return { active: false, reason: 'Out of Classes' };
-        if (activePackage.expiration_date && dayjs().isAfter(dayjs(activePackage.expiration_date).endOf('day'))) {
-            return { active: false, reason: 'Package Expired' };
-        }
-        return { active: true, reason: 'Good to go' };
-    };
-
-    const renderClientCard = ({ item }: { item: any }) => {
-        const activePackage = item.activePackage;
-        const status = getStatus(activePackage);
-
-        const isGoodToGo = status.active;
-        const showReason = !isGoodToGo && status.reason !== 'Out of Classes';
-        const statusColor = isGoodToGo ? theme.textSecondary : theme.primary;
-
-        return (
-            <TouchableOpacity activeOpacity={0.8} onPress={() => handleClientPress(item)}>
-                <ThemedView type="surface" style={styles.clientCard}>
-                    <View style={styles.clientCardHeader}>
-                        <View>
-                            <ThemedText style={styles.clientName}>{item.name}</ThemedText>
-                            <ThemedText themeColor="textSecondary" style={styles.clientPhone}>{item.phone || 'No phone added'}</ThemedText>
-                        </View>
-                        {!isGoodToGo && (
-                            <SymbolView name="exclamationmark.triangle.fill" size={20} tintColor={theme.primary} />
-                        )}
-                    </View>
-
-                    {activePackage ? (
-                        <View style={styles.packageContainer}>
-                            <View style={[styles.packagePill, { backgroundColor: theme.backgroundElement }]}>
-                                <ThemedText style={styles.packageTitle}>{activePackage.packages.name}</ThemedText>
-                            </View>
-
-                            <ThemedText style={[styles.statusText, { color: statusColor }]}>
-                                {activePackage.classes_remaining} {activePackage.classes_remaining === 1 ? 'class' : 'classes'} left
-                                {showReason ? ` • ${status.reason.toUpperCase()}` : ''}
-                            </ThemedText>
-                        </View>
-                    ) : (
-                        <ThemedText style={{ color: theme.primary, fontWeight: '600', marginTop: 4 }}>No package history.</ThemedText>
-                    )}
-                </ThemedView>
-            </TouchableOpacity>
-        );
-    };
+  const renderServiceTile = (summary: ServiceSummary, compact = false) => {
+    const hasPackage = summary.totalCount > 0;
+    const palette = getStatusPalette(summary);
+    const value = hasPackage ? (summary.usableClasses > 0 ? `${summary.usableClasses}` : summary.reason) : 'None';
+    const caption = hasPackage && summary.usableClasses > 0 ? 'left' : summary.label;
 
     return (
-        <ThemedView style={styles.container}>
-            <SafeAreaView style={styles.safeArea}>
-                <View style={styles.header}>
-                    <ThemedText style={styles.headerTitle}>Clients</ThemedText>
-                </View>
-
-                <View style={[styles.searchContainer, { backgroundColor: theme.backgroundElement }]}>
-                    <SymbolView name="magnifyingglass" size={18} tintColor={theme.textSecondary} style={styles.searchIcon} />
-                    <TextInput
-                        style={[styles.searchInput, { color: theme.text }]}
-                        placeholder="Search clients..."
-                        placeholderTextColor={theme.textSecondary}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        clearButtonMode="while-editing"
-                    />
-                </View>
-
-                {loading ? (
-                    <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
-                ) : (
-                    <FlatList
-                        data={filteredClients}
-                        keyExtractor={(item) => item.id.toString()}
-                        renderItem={renderClientCard}
-                        contentContainerStyle={styles.listContent}
-                        showsVerticalScrollIndicator={false}
-                        ListEmptyComponent={<ThemedText themeColor="textSecondary" style={styles.emptyText}>No clients found.</ThemedText>}
-                    />
-                )}
-
-                <TouchableOpacity style={[styles.fab, { backgroundColor: theme.primary }]} activeOpacity={0.8} onPress={handleAddClient}>
-                    <SymbolView name="person.badge.plus.fill" size={22} tintColor="#FFFFFF" />
-                </TouchableOpacity>
-            </SafeAreaView>
-
-            <BottomSheetModal
-                ref={bottomSheetModalRef}
-                index={0}
-                snapPoints={snapPoints}
-                backdropComponent={renderBackdrop}
-                backgroundStyle={{ backgroundColor: theme.backgroundElement }}
-                handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}
-                keyboardBlurBehavior="restore"
-            >
-                <BottomSheetView style={styles.sheetContent}>
-                    <ThemedText style={styles.sheetTitle}>
-                        {editingClient ? 'Client Details' : 'New Client'}
-                    </ThemedText>
-
-                    <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Name</ThemedText>
-                    <BottomSheetTextInput
-                        style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
-                        value={fullName}
-                        onChangeText={setFullName}
-                        placeholderTextColor={theme.textSecondary}
-                    />
-
-                    <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Phone Number</ThemedText>
-                    <BottomSheetTextInput
-                        style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
-                        value={phone}
-                        onChangeText={setPhone}
-                        keyboardType="phone-pad"
-                        placeholderTextColor={theme.textSecondary}
-                    />
-
-                    <View style={styles.packageSelectorContainer}>
-                        <ThemedText themeColor="textSecondary" style={styles.inputLabel}>
-                            {editingClient ? 'Active Package' : 'Initial Package'}
-                        </ThemedText>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipScroll}>
-                            {packages.map((pkg) => {
-                                const isSelected = selectedPackageId === pkg.id;
-                                return (
-                                    <TouchableOpacity
-                                        key={pkg.id.toString()}
-                                        style={[
-                                            styles.chip,
-                                            { backgroundColor: isSelected ? theme.text : theme.background, borderColor: isSelected ? theme.text : theme.surface }
-                                        ]}
-                                        onPress={() => setSelectedPackageId(pkg.id)}
-                                    >
-                                        <ThemedText type="small" style={{ color: isSelected ? theme.background : theme.text, fontWeight: '600' }}>
-                                            {pkg.name}
-                                        </ThemedText>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </ScrollView>
-                    </View>
-
-                    {editingClient && editingClient.activePackage && (
-                        <View style={styles.actionsContainer}>
-                            <ThemedText style={styles.sectionSubtitle}>Package Management</ThemedText>
-                            <View style={styles.actionButtonsRow}>
-                                <TouchableOpacity style={[styles.actionButton, { backgroundColor: theme.background, borderColor: theme.surface, borderWidth: 1 }]} onPress={handleRenew}>
-                                    <SymbolView name="arrow.triangle.2.circlepath" size={16} tintColor={theme.text} />
-                                    <ThemedText style={styles.actionButtonText}>Renew</ThemedText>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    onPress={handleMarkPaid}
-                                    style={[
-                                        styles.actionButton,
-                                        { backgroundColor: editingClient.activePackage.payment_status === 'unpaid' ? '#28A745' : theme.background, borderColor: editingClient.activePackage.payment_status === 'unpaid' ? '#28A745' : theme.surface, borderWidth: 1 }
-                                    ]}>
-                                    <SymbolView name="dollarsign.circle.fill" size={16} tintColor={editingClient.activePackage.payment_status === 'unpaid' ? '#FFF' : theme.text} />
-                                    <ThemedText style={[styles.actionButtonText, { color: editingClient.activePackage.payment_status === 'unpaid' ? '#FFF' : theme.text }]}>Mark Paid</ThemedText>
-                                </TouchableOpacity>
-                            </View>
-                        </View>
-                    )}
-
-                    <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave} activeOpacity={0.8}>
-                        <ThemedText style={styles.saveButtonText}>Save Details</ThemedText>
-                    </TouchableOpacity>
-                </BottomSheetView>
-            </BottomSheetModal>
-        </ThemedView>
+      <View key={summary.serviceType} style={[styles.serviceTile, compact && styles.serviceTileCompact]}>
+        <View style={[styles.serviceTileAccent, { backgroundColor: palette.border }]} />
+        <View style={styles.serviceTileHeader}>
+          <ThemedText style={[styles.serviceTileLabel, { color: palette.text }]}>{summary.label}</ThemedText>
+          {summary.needsAttention && palette.icon && <SymbolView name={palette.icon} size={13} tintColor={palette.border} />}
+        </View>
+        <View style={styles.serviceTileValueRow}>
+          <ThemedText style={[compact ? styles.serviceTileValueCompact : styles.serviceTileValue, { color: palette.text }]}>
+            {value}
+          </ThemedText>
+          <ThemedText style={[styles.serviceTileCaption, { color: palette.muted }]}>{caption}</ThemedText>
+        </View>
+      </View>
     );
+  };
+
+  const renderPackageHistoryRow = (clientPackage: ClientPackageRow) => {
+    const status = getClientPackageStatus(clientPackage);
+    const pkg = clientPackage.packages;
+    const isUnpaid = clientPackage.payment_status === 'unpaid';
+    const serviceLabel = pkg ? getServiceLabel(pkg.service_type) : 'Package';
+    const expirationText = clientPackage.expiration_date
+      ? `Expires ${dayjs(clientPackage.expiration_date).format('MMM D, YYYY')}`
+      : 'No expiration';
+
+    return (
+      <View key={clientPackage.id} style={[styles.historyRow, { borderColor: theme.surface, backgroundColor: theme.background }]}>
+        <View style={styles.historyMain}>
+          <View style={styles.historyTitleRow}>
+            <ThemedText style={styles.historyTitle}>{pkg?.name ?? 'Unknown Package'}</ThemedText>
+            <View style={[styles.historyServicePill, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText style={styles.historyServiceText}>{serviceLabel}</ThemedText>
+            </View>
+          </View>
+          <ThemedText themeColor="textSecondary" style={styles.historyMeta}>
+            {clientPackage.classes_remaining} left • {expirationText}
+          </ThemedText>
+          <ThemedText style={[styles.historyStatus, { color: status.active ? '#28A745' : theme.primary }]}>
+            {status.reason}
+          </ThemedText>
+        </View>
+
+        <View style={styles.historyActionColumn}>
+          <View style={[styles.remainingBadge, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText style={styles.remainingValue}>{clientPackage.classes_remaining}</ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.remainingLabel}>left</ThemedText>
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.markPaidButton,
+              {
+                backgroundColor: isUnpaid ? '#28A745' : theme.backgroundElement,
+                borderColor: isUnpaid ? '#28A745' : theme.surface,
+              },
+            ]}
+            onPress={() => handleMarkPaid(clientPackage.id)}
+            disabled={!isUnpaid}
+            activeOpacity={isUnpaid ? 0.8 : 1}
+          >
+            <SymbolView name="dollarsign.circle.fill" size={15} tintColor={isUnpaid ? '#FFFFFF' : theme.textSecondary} />
+            <ThemedText style={[styles.markPaidText, { color: isUnpaid ? '#FFFFFF' : theme.textSecondary }]}>
+              {isUnpaid ? 'Pay' : 'Paid'}
+            </ThemedText>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const renderFilterChip = (filter: ClientFilter, label: string, count: number) => {
+    const isSelected = activeFilter === filter;
+
+    return (
+      <TouchableOpacity
+        key={filter}
+        style={[
+          styles.filterChip,
+          {
+            backgroundColor: isSelected ? theme.text : theme.backgroundElement,
+            borderColor: isSelected ? theme.text : theme.backgroundSelected,
+          },
+        ]}
+        onPress={() => setActiveFilter(filter)}
+        activeOpacity={0.8}
+      >
+        <ThemedText style={[styles.filterChipText, { color: isSelected ? theme.background : theme.text }]}>
+          {label}
+        </ThemedText>
+        <View style={[styles.filterCountPill, { backgroundColor: isSelected ? theme.background : theme.background }]}>
+          <ThemedText style={[styles.filterCountText, { color: isSelected ? theme.text : theme.textSecondary }]}>
+            {count}
+          </ThemedText>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderPackageOption = (pkg: PackageRow) => {
+    const isSelected = selectedPackageId === pkg.id;
+
+    return (
+      <TouchableOpacity
+        key={pkg.id.toString()}
+        style={[
+          styles.packageOption,
+          {
+            backgroundColor: isSelected ? theme.backgroundSelected : theme.background,
+            borderColor: isSelected ? theme.text : theme.surface,
+          },
+        ]}
+        onPress={() => setSelectedPackageId(pkg.id)}
+        activeOpacity={0.8}
+      >
+        <View style={styles.packageOptionMain}>
+          <ThemedText style={styles.packageOptionTitle}>{pkg.name}</ThemedText>
+          <ThemedText themeColor="textSecondary" style={styles.packageOptionMeta}>
+            {pkg.total_classes} credits • {pkg.expires_in_weeks ? `${pkg.expires_in_weeks} weeks` : 'No expiration'}
+          </ThemedText>
+        </View>
+
+        {editingClient ? (
+          <TouchableOpacity
+            style={[styles.inlineAddButton, { backgroundColor: theme.text }]}
+            onPress={() => handleAddPackage(pkg)}
+            activeOpacity={0.8}
+          >
+            <SymbolView name="plus" size={14} tintColor={theme.background} weight="bold" />
+          </TouchableOpacity>
+        ) : (
+          <View style={[styles.radioMark, { borderColor: isSelected ? theme.text : theme.textSecondary }]}>
+            {isSelected && <View style={[styles.radioMarkInner, { backgroundColor: theme.text }]} />}
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  const renderClientCard = ({ item }: { item: ClientRecord }) => {
+    const attention = getClientAttention(item);
+    const visibleSummaries = getVisiblePackageSummaries(item);
+
+    return (
+      <TouchableOpacity activeOpacity={0.8} onPress={() => handleClientPress(item)}>
+        <ThemedView type="surface" style={styles.clientCard}>
+          <View style={styles.clientCardHeader}>
+            <View style={styles.clientIdentity}>
+              <ThemedText style={styles.clientName}>{item.name}</ThemedText>
+              <ThemedText themeColor="textSecondary" style={styles.clientPhone}>{item.phone || 'No phone added'}</ThemedText>
+            </View>
+            {!attention.active && (
+              <SymbolView name="exclamationmark.triangle.fill" size={20} tintColor={theme.primary} />
+            )}
+          </View>
+
+          <View style={[styles.serviceTileRow, { borderTopColor: theme.backgroundElement }]}>
+            {visibleSummaries.map((summary) => renderServiceTile(summary, true))}
+          </View>
+
+          {!attention.active && (
+            <View style={styles.attentionRow}>
+              <SymbolView name="exclamationmark.triangle.fill" size={13} tintColor={theme.primary} />
+              <ThemedText style={[styles.statusText, { color: theme.primary }]}>
+                {attention.reason}
+              </ThemedText>
+            </View>
+          )}
+        </ThemedView>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <ThemedView style={styles.container}>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.header}>
+          <View>
+            <ThemedText style={styles.headerTitle}>Clients</ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.headerMeta}>
+              {clientMetrics.total} clients • {clientMetrics.attention} need attention
+            </ThemedText>
+          </View>
+        </View>
+
+        <View style={[styles.searchContainer, { backgroundColor: theme.backgroundElement }]}>
+          <SymbolView name="magnifyingglass" size={18} tintColor={theme.textSecondary} style={styles.searchIcon} />
+          <TextInput
+            style={[styles.searchInput, { color: theme.text }]}
+            placeholder="Search clients..."
+            placeholderTextColor={theme.textSecondary}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            clearButtonMode="while-editing"
+          />
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+          {renderFilterChip('all', 'All', clientMetrics.total)}
+          {renderFilterChip('attention', 'Attention', clientMetrics.attention)}
+          {renderFilterChip('unpaid', 'Unpaid', clientMetrics.unpaid)}
+          {renderFilterChip('noCredits', 'No Credits', clientMetrics.noCredits)}
+        </ScrollView>
+
+        {loading ? (
+          <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
+        ) : (
+          <FlatList
+            data={filteredClients}
+            keyExtractor={(item) => item.id.toString()}
+            renderItem={renderClientCard}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={<ThemedText themeColor="textSecondary" style={styles.emptyText}>No clients found.</ThemedText>}
+          />
+        )}
+
+        <TouchableOpacity style={[styles.fab, { backgroundColor: theme.primary }]} activeOpacity={0.8} onPress={handleAddClient}>
+          <SymbolView name="person.badge.plus.fill" size={22} tintColor="#FFFFFF" />
+        </TouchableOpacity>
+      </SafeAreaView>
+
+      <BottomSheetModal
+        ref={bottomSheetModalRef}
+        index={0}
+        snapPoints={snapPoints}
+        backdropComponent={renderBackdrop}
+        backgroundStyle={{ backgroundColor: theme.backgroundElement }}
+        handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}
+        keyboardBlurBehavior="restore"
+      >
+        <BottomSheetView style={styles.sheetContent}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetScrollContent}>
+            <ThemedText style={styles.sheetTitle}>{editingClient ? 'Client Details' : 'New Client'}</ThemedText>
+
+            {editingClient && (
+              <View style={[styles.sheetSummary, { backgroundColor: theme.background, borderColor: theme.surface }]}>
+                <View style={styles.sheetSummaryHeader}>
+                  <View style={styles.sheetSummaryAvatar}>
+                    <ThemedText style={styles.sheetSummaryInitials}>
+                      {editingClient.name
+                        .split(' ')
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .map((part) => part[0])
+                        .join('')
+                        .toUpperCase()}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.sheetSummaryText}>
+                    <ThemedText style={styles.sheetSummaryName}>{editingClient.name}</ThemedText>
+                    <ThemedText themeColor="textSecondary" style={styles.sheetSummaryMeta}>
+                      {editingClient.phone || 'No phone added'}
+                    </ThemedText>
+                  </View>
+                </View>
+
+                {!getClientAttention(editingClient).active && (
+                  <View style={styles.sheetSummaryStatusRow}>
+                    <View style={[styles.statusPill, { backgroundColor: theme.backgroundElement, borderColor: theme.primary }]}>
+                      <SymbolView name="exclamationmark.triangle.fill" size={14} tintColor={theme.primary} />
+                      <ThemedText style={[styles.statusPillText, { color: theme.primary }]}>
+                        {getClientAttention(editingClient).reason}
+                      </ThemedText>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
+            <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Name</ThemedText>
+            <BottomSheetTextInput
+              style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
+              value={fullName}
+              onChangeText={setFullName}
+              placeholderTextColor={theme.textSecondary}
+            />
+
+            <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Phone Number</ThemedText>
+            <BottomSheetTextInput
+              style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              placeholderTextColor={theme.textSecondary}
+            />
+
+            {editingClient && (
+              <View style={styles.section}>
+                <ThemedText style={styles.sectionSubtitle}>Balances</ThemedText>
+                <View style={[styles.balanceGrid, { borderTopColor: theme.surface }]}>
+                  {getVisiblePackageSummaries(editingClient).map((summary) => renderServiceTile(summary))}
+                </View>
+              </View>
+            )}
+
+            <View style={styles.section}>
+              <ThemedText themeColor="textSecondary" style={styles.inputLabel}>
+                {editingClient ? 'Add Package' : 'Initial Package'}
+              </ThemedText>
+              <View style={styles.packageGroupStack}>
+                {packagesByService.map((group) => (
+                  <View key={group.serviceType} style={styles.packageGroup}>
+                    <View style={styles.packageGroupHeader}>
+                      <ThemedText style={styles.packageGroupTitle}>{group.label} Packages</ThemedText>
+                      <ThemedText themeColor="textSecondary" style={styles.packageGroupCount}>
+                        {group.packages.length}
+                      </ThemedText>
+                    </View>
+                    <View style={styles.packageOptionStack}>
+                      {group.packages.map(renderPackageOption)}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            {editingClient && (
+              <View style={styles.section}>
+                <ThemedText style={styles.sectionSubtitle}>Package History</ThemedText>
+                {editingClient.client_packages.length > 0 ? (
+                  editingClient.client_packages.map(renderPackageHistoryRow)
+                ) : (
+                  <ThemedText themeColor="textSecondary" style={styles.emptyHistoryText}>No package history.</ThemedText>
+                )}
+              </View>
+            )}
+
+            <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave} activeOpacity={0.8}>
+              <ThemedText style={styles.saveButtonText}>{editingClient ? 'Save Details' : 'Create Client'}</ThemedText>
+            </TouchableOpacity>
+          </ScrollView>
+        </BottomSheetView>
+      </BottomSheetModal>
+    </ThemedView>
+  );
 }
 
-// --- Styles ---
 const styles = StyleSheet.create({
-    container: { flex: 1 }, safeArea: { flex: 1 },
-    header: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
-    headerTitle: { fontSize: 24, fontWeight: '800', textTransform: 'uppercase' },
+  container: { flex: 1 },
+  safeArea: { flex: 1 },
+  header: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
+  headerTitle: { fontSize: 24, fontWeight: '800', textTransform: 'uppercase' },
+  headerMeta: { fontSize: 13, fontWeight: '700', marginTop: 2 },
 
-    searchContainer: { flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: 10, borderRadius: Spacing.two, marginBottom: Spacing.three },
-    searchIcon: { marginRight: Spacing.two },
-    searchInput: { flex: 1, fontSize: 15, fontWeight: '500', padding: 0 },
+  searchContainer: { flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: 10, borderRadius: Spacing.two, marginBottom: Spacing.three },
+  searchIcon: { marginRight: Spacing.two },
+  searchInput: { flex: 1, fontSize: 15, fontWeight: '500', padding: 0 },
+  filterScroll: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.three, gap: Spacing.two },
+  filterChip: { borderWidth: 1, minHeight: 34, borderRadius: 17, paddingLeft: 12, paddingRight: 6, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  filterChipText: { fontSize: 13, fontWeight: '800' },
+  filterCountPill: { minWidth: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
+  filterCountText: { fontSize: 12, fontWeight: '900', fontVariant: ['tabular-nums'] },
 
-    listContent: { paddingHorizontal: Spacing.three, paddingBottom: 100 },
-    clientCard: { padding: 16, borderRadius: 16, marginBottom: 12, gap: 12 },
-    clientCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-    clientName: { fontSize: 17, fontWeight: '700', marginBottom: 2 },
-    clientPhone: { fontSize: 14, fontWeight: '500' },
+  listContent: { paddingHorizontal: Spacing.three, paddingBottom: 100 },
+  clientCard: { padding: 16, borderRadius: 8, marginBottom: 12, gap: 12, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
+  clientCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: Spacing.three },
+  clientIdentity: { flex: 1 },
+  clientName: { fontSize: 17, fontWeight: '700', marginBottom: 2 },
+  clientPhone: { fontSize: 14, fontWeight: '500' },
 
-    packageContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-    packagePill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
-    packageTitle: { fontSize: 13, fontWeight: '600' },
-    statusText: { fontSize: 14, fontWeight: '700' },
+  serviceTileRow: { flexDirection: 'row', gap: Spacing.three, borderTopWidth: 1, paddingTop: Spacing.two },
+  serviceTile: { flex: 1, minHeight: 42, paddingLeft: 10, paddingVertical: 2, justifyContent: 'center', overflow: 'hidden' },
+  serviceTileCompact: { minHeight: 38 },
+  serviceTileAccent: { position: 'absolute', left: 0, top: 4, bottom: 4, width: 3, borderRadius: 2 },
+  serviceTileHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  serviceTileLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0 },
+  serviceTileValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5, flexWrap: 'wrap' },
+  serviceTileValue: { fontSize: 19, lineHeight: 23, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  serviceTileValueCompact: { fontSize: 17, lineHeight: 21, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  serviceTileCaption: { fontSize: 12, fontWeight: '600' },
+  statusText: { fontSize: 12, fontWeight: '700' },
+  attentionRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 
-    emptyText: { textAlign: 'center', marginTop: Spacing.five },
+  emptyText: { textAlign: 'center', marginTop: Spacing.five },
+  fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
 
-    fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
+  sheetContent: { flex: 1, padding: Spacing.four, paddingTop: Spacing.two },
+  sheetScrollContent: { paddingBottom: Spacing.four },
+  sheetTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.three },
+  sheetSummary: { borderWidth: 1, borderRadius: 8, padding: 14, gap: Spacing.two, marginBottom: Spacing.three },
+  sheetSummaryHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
+  sheetSummaryAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#ED2024', justifyContent: 'center', alignItems: 'center' },
+  sheetSummaryInitials: { color: '#FFFFFF', fontSize: 14, fontWeight: '900' },
+  sheetSummaryText: { flex: 1 },
+  sheetSummaryName: { fontSize: 17, fontWeight: '900' },
+  sheetSummaryMeta: { fontSize: 13, fontWeight: '700' },
+  sheetSummaryStatusRow: { flexDirection: 'row', alignItems: 'center' },
+  statusPill: { borderWidth: 1, borderRadius: 15, minHeight: 30, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statusPillText: { fontSize: 12, fontWeight: '700' },
+  inputLabel: { fontWeight: '600', marginBottom: 6, fontSize: 13 },
+  input: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, fontSize: 15, marginBottom: Spacing.three },
 
-    sheetContent: { flex: 1, padding: Spacing.four, paddingTop: Spacing.two },
-    sheetTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.three },
-    inputLabel: { fontWeight: '600', marginBottom: 6, fontSize: 13 },
-    input: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, fontSize: 15, marginBottom: Spacing.three },
+  section: { marginBottom: Spacing.three },
+  sectionSubtitle: { fontSize: 15, fontWeight: '800', marginBottom: Spacing.two },
+  balanceGrid: { flexDirection: 'row', gap: Spacing.three, borderTopWidth: 1, paddingTop: Spacing.two },
+  packageGroupStack: { gap: Spacing.three },
+  packageGroup: { gap: Spacing.two },
+  packageGroupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  packageGroupTitle: { fontSize: 14, fontWeight: '900' },
+  packageGroupCount: { fontSize: 12, fontWeight: '800' },
+  packageOptionStack: { gap: Spacing.two },
+  packageOption: { borderWidth: 1, borderRadius: 8, minHeight: 64, padding: 12, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  packageOptionMain: { flex: 1 },
+  packageOptionTitle: { fontSize: 14, fontWeight: '900', marginBottom: 2 },
+  packageOptionMeta: { fontSize: 12, fontWeight: '700' },
+  inlineAddButton: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center' },
+  radioMark: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
+  radioMarkInner: { width: 12, height: 12, borderRadius: 6 },
 
-    packageSelectorContainer: { marginBottom: Spacing.three },
-    chipScroll: { gap: Spacing.two, paddingBottom: Spacing.two },
-    chip: { borderWidth: 1, paddingHorizontal: Spacing.three, paddingVertical: 8, borderRadius: 20 },
+  historyRow: { borderWidth: 1, borderRadius: 8, padding: 12, marginBottom: Spacing.two, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  historyMain: { flex: 1 },
+  historyTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: Spacing.two, marginBottom: 4 },
+  historyTitle: { fontSize: 14, fontWeight: '800' },
+  historyServicePill: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
+  historyServiceText: { fontSize: 11, fontWeight: '800' },
+  historyMeta: { fontSize: 12, fontWeight: '600', marginBottom: 3 },
+  historyStatus: { fontSize: 12, fontWeight: '800' },
+  historyActionColumn: { minWidth: 70, alignItems: 'stretch', gap: Spacing.two },
+  remainingBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, alignItems: 'center' },
+  remainingValue: { fontSize: 17, lineHeight: 20, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  remainingLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
+  markPaidButton: { borderWidth: 1, minWidth: 62, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 7, borderRadius: Spacing.two },
+  markPaidText: { fontSize: 12, fontWeight: '800' },
+  emptyHistoryText: { textAlign: 'center', paddingVertical: Spacing.three, fontWeight: '600' },
 
-    actionsContainer: { marginBottom: Spacing.three },
-    sectionSubtitle: { fontSize: 15, fontWeight: '700', marginBottom: Spacing.two },
-    actionButtonsRow: { flexDirection: 'row', gap: Spacing.two },
-    actionButton: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: Spacing.two, paddingVertical: 10, borderRadius: Spacing.two },
-    actionButtonText: { fontWeight: '600', fontSize: 13 },
-
-    saveButton: { paddingVertical: 12, borderRadius: Spacing.two, alignItems: 'center', marginTop: 'auto', marginBottom: Spacing.four },
-    saveButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
+  saveButton: { paddingVertical: 13, borderRadius: Spacing.two, alignItems: 'center', marginTop: Spacing.two },
+  saveButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
 });
