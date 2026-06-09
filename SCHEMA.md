@@ -79,3 +79,31 @@ This file serves as the source of truth for the Supabase Postgres database layou
 | `client_id` | `int8` |  |
 | `client_package_id` | `int8` |  Nullable |
 | `created_at` | `timestamptz` |  |
+
+## Table `app_admins`
+
+Owner/staff allowlist for the app. For the first owner TestFlight, only the gym owner's Supabase Auth user should be inserted here.
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `user_id` | `uuid` | Primary Key, references `auth.users.id` |
+| `created_at` | `timestamptz` |  |
+
+## Security
+
+Row Level Security is enabled on `clients`, `packages`, `client_packages`, `classes`, `attendance`, `class_templates`, and `app_admins`.
+
+- `authenticated` users can read/write gym data only when their `auth.users.id` exists in `app_admins`.
+- `anon` has no table access.
+- `app_admins` is managed manually from Supabase SQL/editor tools; app users cannot insert/update/delete allowlist rows.
+
+## RPC Functions
+
+| Function | Returns | Purpose |
+|----------|---------|---------|
+| `process_check_in(p_class_id bigint, p_client_id bigint)` | `boolean` | Consumes one paid matching package credit and marks attendance checked in. |
+| `undo_check_in(p_class_id bigint, p_client_id bigint)` | `boolean` | Restores one consumed package credit and clears `attendance.client_package_id`. |
+| `cancel_session(p_class_id bigint)` | `boolean` | Restores all checked-in credits for a class, deletes attendance rows, then deletes the class. |
+| `generate_classes_from_templates(p_start_date date, p_end_date date)` | `integer` | Inserts missing scheduled classes from `class_templates` within a date range. |

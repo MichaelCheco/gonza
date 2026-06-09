@@ -4,9 +4,10 @@ import { supabase } from '../../utils/supabase';
 
 type AuthContextType = {
     session: Session | null | undefined;
+    signOut: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthContextType>({ session: undefined });
+const AuthContext = createContext<AuthContextType>({ session: undefined, signOut: async () => undefined });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     // undefined means loading, null means unauthenticated
@@ -26,8 +27,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return () => subscription.unsubscribe();
     }, []);
 
+    const signOut = async () => {
+        await supabase.auth.signOut();
+    };
+
     return (
-        <AuthContext.Provider value={{ session }}>
+        <AuthContext.Provider value={{ session, signOut }}>
             {children}
         </AuthContext.Provider>
     );

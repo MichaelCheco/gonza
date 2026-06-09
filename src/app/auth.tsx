@@ -22,26 +22,13 @@ export default function AuthScreen() {
         setLoading(false);
     }
 
-    async function signUpWithEmail() {
-        setLoading(true);
-        const { error } = await supabase.auth.signUp({ email, password });
-
-        if (error) {
-            Alert.alert('Sign Up Failed', error.message);
-        }
-        // If successful, the AuthProvider automatically detects the new session 
-        // and the RootLayout routes the user directly into the app.
-
-        setLoading(false);
-    }
-
     return (
         <ThemedView style={styles.container}>
             <SafeAreaView style={styles.safeArea}>
                 <View style={styles.content}>
-                    <ThemedText style={styles.title}>Welcome</ThemedText>
+                    <ThemedText style={styles.title}>Gonza Boxing</ThemedText>
                     <ThemedText themeColor="textSecondary" style={styles.subtitle}>
-                        Sign in or create an account to continue.
+                        Owner test access. Sign in with the account created for this beta.
                     </ThemedText>
 
                     <View style={styles.inputContainer}>
@@ -77,13 +64,9 @@ export default function AuthScreen() {
                             <ThemedText style={styles.buttonText}>Sign In</ThemedText>
                         </TouchableOpacity>
 
-                        <TouchableOpacity
-                            style={[styles.button, styles.outlineButton, { borderColor: theme.primary }]}
-                            disabled={loading}
-                            onPress={signUpWithEmail}
-                        >
-                            <ThemedText style={[styles.buttonText, { color: theme.primary }]}>Sign Up</ThemedText>
-                        </TouchableOpacity>
+                        <ThemedText themeColor="textSecondary" style={styles.ownerOnlyText}>
+                            Need access? Add the owner Auth user to the app_admins allowlist in Supabase.
+                        </ThemedText>
                     </View>
                 </View>
             </SafeAreaView>
@@ -102,6 +85,6 @@ const styles = StyleSheet.create({
     input: { borderWidth: 1, borderRadius: Spacing.two, padding: 14, fontSize: 15 },
     buttonContainer: { marginTop: Spacing.four, gap: Spacing.three },
     button: { paddingVertical: 14, borderRadius: Spacing.two, alignItems: 'center' },
-    outlineButton: { backgroundColor: 'transparent', borderWidth: 1 },
     buttonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+    ownerOnlyText: { fontSize: 12, lineHeight: 17, textAlign: 'center' },
 });

@@ -13,6 +13,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useAuth } from '@/providers/auth-provider';
 import { supabase } from '../../utils/supabase';
 
 dayjs.extend(customParseFormat);
@@ -32,8 +33,17 @@ type CheckInState = {
   message?: string;
 };
 
+type SessionMode = 'Group' | 'Personal Training';
+
+type AttendanceRow = {
+  id: number;
+  client_id: number;
+  client_package_id: number | null;
+};
+
 export default function HomeScreen() {
   const theme = useTheme();
+  const { signOut } = useAuth();
   const todayString = dayjs().format('YYYY-MM-DD');
   const [selectedDate, setSelectedDate] = useState(todayString);
 
@@ -60,6 +70,7 @@ export default function HomeScreen() {
 
   const [clientQuery, setClientQuery] = useState('');
   const [selectedClient, setSelectedClient] = useState<{ id: string, name: string } | null>(null);
+  const [sessionMode, setSessionMode] = useState<SessionMode>('Group');
   const [sessionTime, setSessionTime] = useState(new Date());
   const [showTimePicker, setShowTimePicker] = useState(false);
 
@@ -137,6 +148,15 @@ export default function HomeScreen() {
   // --- 2. Fetch Classes dynamically when selectedDate changes ---
   const fetchClasses = useCallback(async () => {
     setLoading(true);
+    const { error: templateError } = await supabase.rpc('generate_classes_from_templates', {
+      p_start_date: dayjs(selectedDate).subtract(14, 'day').format('YYYY-MM-DD'),
+      p_end_date: dayjs(selectedDate).add(14, 'day').format('YYYY-MM-DD'),
+    });
+
+    if (templateError) {
+      console.error('Template Schedule Error:', templateError.message);
+    }
+
     const { data, error } = await supabase
       .from('classes')
       .select(`
@@ -183,9 +203,9 @@ export default function HomeScreen() {
   }, [fetchClasses]);
 
   const filteredClients = useMemo(() => {
-    if (!clientQuery || selectedClient) return [];
+    if (sessionMode !== 'Personal Training' || !clientQuery || selectedClient) return [];
     return clients.filter(c => c.name.toLowerCase().includes(clientQuery.toLowerCase()));
-  }, [clientQuery, selectedClient, clients]);
+  }, [clientQuery, selectedClient, clients, sessionMode]);
 
   const filteredRoster = useMemo(() => {
     if (!rosterSearchQuery) return rosterData;
@@ -200,7 +220,7 @@ export default function HomeScreen() {
       setAddWalkInQuery('');
       fetchRoster(session.id); // <-- Fetch real data
       rosterSheetRef.current?.present();
-    } else {
+    } else if (!session.checkedIn) {
       handlePTCheckIn(session);
     }
   };
@@ -209,7 +229,25 @@ export default function HomeScreen() {
     if (!selectedGroupClass) return;
 
     if (rosterItem.checkedIn) {
-      return Alert.alert("Notice", "Client is already checked in. Un-doing check-ins requires manual package adjustment in this version.");
+      return Alert.alert('Undo Check-In', `Restore one credit for ${rosterItem.name}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Undo',
+          style: 'destructive',
+          onPress: async () => {
+            const { data: success, error } = await supabase.rpc('undo_check_in', {
+              p_class_id: parseInt(selectedGroupClass.id),
+              p_client_id: parseInt(rosterItem.clientId),
+            });
+
+            if (error) {
+              Alert.alert('Undo Failed', 'Could not undo this check-in. Please try again.');
+            } else if (success) {
+              fetchRoster(selectedGroupClass.id);
+            }
+          },
+        },
+      ]);
     }
 
     // Call the RPC we made earlier!
@@ -259,14 +297,71 @@ export default function HomeScreen() {
     }
   };
 
+  const handlePTUndoCheckIn = (session: SessionType) => {
+    if (!session.clientId || ptCheckInStates[session.id]?.status === 'loading') return;
+
+    Alert.alert('Undo Check-In', `Restore one credit for ${session.title}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Undo',
+        style: 'destructive',
+        onPress: async () => {
+          setPtCheckInStates(prev => ({
+            ...prev,
+            [session.id]: { status: 'loading' },
+          }));
+
+          const { data: success, error } = await supabase.rpc('undo_check_in', {
+            p_class_id: parseInt(session.id),
+            p_client_id: parseInt(session.clientId!),
+          });
+
+          if (error) {
+            setPtCheckInStates(prev => ({
+              ...prev,
+              [session.id]: { status: 'error', message: 'Undo failed' },
+            }));
+          } else if (success) {
+            setClasses(prev => prev.map(item => item.id === session.id ? { ...item, checkedIn: false } : item));
+            setPtCheckInStates(prev => {
+              const next = { ...prev };
+              delete next[session.id];
+              return next;
+            });
+          } else {
+            setPtCheckInStates(prev => ({
+              ...prev,
+              [session.id]: { status: 'error', message: 'Not checked in' },
+            }));
+          }
+        },
+      },
+    ]);
+  };
+
   const handleAddSession = () => {
-    setEditingSession(null); setClientQuery(''); setSelectedClient(null); setSessionTime(new Date()); editSheetRef.current?.present();
+    setEditingSession(null);
+    setSessionMode('Group');
+    setClientQuery('');
+    setSelectedClient(null);
+    setSessionTime(new Date());
+    editSheetRef.current?.present();
+  };
+
+  const handleSignOut = () => {
+    Alert.alert('Sign Out', 'Sign out of the owner account?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: signOut },
+    ]);
   };
 
   const handleLongPressEdit = (session: SessionType) => {
-    setEditingSession(session); setClientQuery(session.title);
+    const nextMode: SessionMode = session.type === 'Personal Training' ? 'Personal Training' : 'Group';
+    setEditingSession(session);
+    setSessionMode(nextMode);
+    setClientQuery(session.title);
     const clientMatch = clients.find(c => c.id === session.clientId);
-    if (clientMatch) setSelectedClient(clientMatch);
+    setSelectedClient(clientMatch && nextMode === 'Personal Training' ? clientMatch : null);
     setSessionTime(dayjs(`${selectedDate} ${session.time}`, 'YYYY-MM-DD h:mm A').toDate());
     editSheetRef.current?.present();
   };
@@ -275,23 +370,77 @@ export default function HomeScreen() {
 
   // --- 3. Save to Supabase ---
   const handleSave = async () => {
-    if (!clientQuery && !selectedClient) {
-      return Alert.alert("Error", "Please enter a class title or select a client.");
+    const isPT = sessionMode === 'Personal Training';
+    const trimmedTitle = clientQuery.trim();
+
+    if (isPT && !selectedClient) {
+      return Alert.alert('Client Required', 'Please select a PT client.');
+    }
+
+    if (!isPT && !trimmedTitle) {
+      return Alert.alert('Title Required', 'Please enter a group class title.');
     }
 
     const timeString = dayjs(sessionTime).format('HH:mm:ss');
-    const isPT = !!selectedClient;
 
     const classData = {
-      title: isPT ? 'PT Session' : clientQuery,
-      class_type: isPT ? 'Personal Training' : 'Group',
+      title: isPT ? 'PT Session' : trimmedTitle,
+      class_type: sessionMode,
       scheduled_date: selectedDate,
       start_time: timeString,
     };
 
     if (editingSession) {
+      const { data: attendanceRows, error: attendanceError } = await supabase
+        .from('attendance')
+        .select('id, client_id, client_package_id')
+        .eq('class_id', editingSession.id);
+
+      if (attendanceError) {
+        return Alert.alert('Save Failed', 'Could not verify attendance records. Please try again.');
+      }
+
+      const rows = (attendanceRows ?? []) as AttendanceRow[];
+      const hasCheckedInAttendance = rows.some((row) => !!row.client_package_id);
+      const wasPT = editingSession.type === 'Personal Training';
+      const existingPTClientId = rows[0]?.client_id?.toString();
+
+      if (hasCheckedInAttendance && wasPT !== isPT) {
+        return Alert.alert('Undo Check-Ins First', 'Undo existing check-ins before changing this session type.');
+      }
+
+      if (!wasPT && isPT && rows.length > 0) {
+        return Alert.alert('Roster Exists', 'Remove roster clients before converting this group class to PT.');
+      }
+
+      if (wasPT && isPT && hasCheckedInAttendance && existingPTClientId !== selectedClient?.id) {
+        return Alert.alert('Undo Check-In First', 'Undo the PT check-in before assigning this session to another client.');
+      }
+
       const { error } = await supabase.from('classes').update(classData).eq('id', editingSession.id);
-      if (error) Alert.alert("Update Error", error.message);
+      if (error) return Alert.alert('Update Error', error.message);
+
+      if (isPT && selectedClient) {
+        if (rows[0]) {
+          const { error: attendanceUpdateError } = await supabase
+            .from('attendance')
+            .update({ client_id: selectedClient.id })
+            .eq('id', rows[0].id);
+
+          if (attendanceUpdateError) return Alert.alert('Attendance Error', 'Could not update the PT client.');
+        } else {
+          const { error: attendanceInsertError } = await supabase.from('attendance').insert({
+            class_id: editingSession.id,
+            client_id: selectedClient.id,
+          });
+
+          if (attendanceInsertError) return Alert.alert('Attendance Error', 'Could not assign the PT client.');
+        }
+      } else if (wasPT && !isPT) {
+        const { error: attendanceDeleteError } = await supabase.from('attendance').delete().eq('class_id', editingSession.id);
+
+        if (attendanceDeleteError) return Alert.alert('Attendance Error', 'Could not clear the old PT client.');
+      }
     } else {
       const { data: newClass, error: classErr } = await supabase.from('classes').insert(classData).select().single();
       if (classErr) return Alert.alert("Insert Error", classErr.message);
@@ -299,7 +448,7 @@ export default function HomeScreen() {
       if (isPT && newClass) {
         const { error: attendanceErr } = await supabase.from('attendance').insert({
           class_id: newClass.id,
-          client_id: selectedClient.id,
+          client_id: selectedClient!.id,
         });
         if (attendanceErr) Alert.alert("Attendance Error", attendanceErr.message);
       }
@@ -311,16 +460,17 @@ export default function HomeScreen() {
 
   // --- 4. Delete from Supabase ---
   const handleDelete = (session: SessionType) => {
-    Alert.alert("Cancel Session", `Remove ${session.title}?`, [
+    Alert.alert("Cancel Session", `Remove ${session.title}? Any checked-in credits will be restored.`, [
       { text: "No", style: "cancel" },
       {
-        text: "Yes, Delete",
+        text: "Cancel Session",
         style: "destructive",
         onPress: async () => {
-          await supabase.from('attendance').delete().eq('class_id', session.id);
-          const { error } = await supabase.from('classes').delete().eq('id', session.id);
+          const { data: success, error } = await supabase.rpc('cancel_session', {
+            p_class_id: parseInt(session.id),
+          });
 
-          if (error) Alert.alert("Delete Error", error.message);
+          if (error || !success) Alert.alert("Cancel Failed", "Could not cancel this session. Please try again.");
           else {
             fetchClasses();
             closeEditSheet();
@@ -332,9 +482,15 @@ export default function HomeScreen() {
 
   const renderLeftActions = (item: SessionType) => {
     if (item.type === 'Group') return null;
+    const isCheckedIn = item.checkedIn || ptCheckInStates[item.id]?.status === 'success';
+
     return (
-      <TouchableOpacity style={[styles.swipeAction, { backgroundColor: '#28A745', marginRight: Spacing.two }]} onPress={() => handlePTCheckIn(item)} activeOpacity={0.8}>
-        <SymbolView name="checkmark.circle.fill" size={22} tintColor="#FFFFFF" />
+      <TouchableOpacity
+        style={[styles.swipeAction, { backgroundColor: isCheckedIn ? theme.primary : '#28A745', marginRight: Spacing.two }]}
+        onPress={() => isCheckedIn ? handlePTUndoCheckIn(item) : handlePTCheckIn(item)}
+        activeOpacity={0.8}
+      >
+        <SymbolView name={isCheckedIn ? 'arrow.uturn.backward.circle.fill' : 'checkmark.circle.fill'} size={22} tintColor="#FFFFFF" />
       </TouchableOpacity>
     );
   };
@@ -368,8 +524,18 @@ export default function HomeScreen() {
                 {isPT ? (
                   <>
                     {isCheckedIn ? (
-                      <View style={styles.ptCheckedBadge} accessibilityLabel="Checked in">
-                        <SymbolView name="checkmark" size={17} tintColor="#FFFFFF" />
+                      <View style={styles.ptCheckedActions}>
+                        <View style={styles.ptCheckedBadge} accessibilityLabel="Checked in">
+                          <SymbolView name="checkmark" size={17} tintColor="#FFFFFF" />
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.undoIconButton, { backgroundColor: theme.backgroundElement }]}
+                          onPress={() => handlePTUndoCheckIn(item)}
+                          activeOpacity={0.75}
+                          accessibilityLabel="Undo PT check-in"
+                        >
+                          <SymbolView name="arrow.uturn.backward" size={15} tintColor={theme.primary} />
+                        </TouchableOpacity>
                       </View>
                     ) : (
                       <TouchableOpacity
@@ -409,11 +575,16 @@ export default function HomeScreen() {
       <SafeAreaView style={styles.safeArea}>
         <View style={[styles.header, { borderBottomColor: theme.backgroundElement }]}>
           <ThemedText style={styles.headerTitle}>Gonza Boxing</ThemedText>
-          {selectedDate !== todayString && (
-            <TouchableOpacity style={[styles.todayButton, { backgroundColor: theme.surface }]} onPress={() => setSelectedDate(todayString)}>
-              <ThemedText type="smallBold">Today</ThemedText>
+          <View style={styles.headerActions}>
+            {selectedDate !== todayString && (
+              <TouchableOpacity style={[styles.todayButton, { backgroundColor: theme.surface }]} onPress={() => setSelectedDate(todayString)}>
+                <ThemedText type="smallBold">Today</ThemedText>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[styles.headerIconButton, { backgroundColor: theme.surface }]} onPress={handleSignOut} activeOpacity={0.8}>
+              <SymbolView name="rectangle.portrait.and.arrow.right" size={16} tintColor={theme.textSecondary} />
             </TouchableOpacity>
-          )}
+          </View>
         </View>
 
         <View style={[styles.calendarContainer, { backgroundColor: theme.background }]}>
@@ -464,10 +635,36 @@ export default function HomeScreen() {
         <BottomSheetView style={styles.sheetContent}>
           <ThemedText style={styles.sheetTitle}>{editingSession ? 'Edit Session' : 'Add Session'}</ThemedText>
 
-          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Client or Group Title</ThemedText>
+          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Session Type</ThemedText>
+          <View style={[styles.modeSelector, { backgroundColor: theme.background }]}>
+            {(['Group', 'Personal Training'] as SessionMode[]).map((mode) => {
+              const isSelected = sessionMode === mode;
+
+              return (
+                <TouchableOpacity
+                  key={mode}
+                  style={[styles.modeOption, { backgroundColor: isSelected ? theme.text : 'transparent' }]}
+                  onPress={() => {
+                    setSessionMode(mode);
+                    setSelectedClient(null);
+                    setClientQuery('');
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <ThemedText style={[styles.modeOptionText, { color: isSelected ? theme.background : theme.textSecondary }]}>
+                    {mode === 'Personal Training' ? 'PT' : 'Group'}
+                  </ThemedText>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>
+            {sessionMode === 'Personal Training' ? 'Client' : 'Group Title'}
+          </ThemedText>
           <BottomSheetTextInput
             style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
-            placeholder="Search clients" placeholderTextColor={theme.textSecondary}
+            placeholder={sessionMode === 'Personal Training' ? 'Search clients' : 'Class title'} placeholderTextColor={theme.textSecondary}
             value={clientQuery} onChangeText={(text) => { setClientQuery(text); setSelectedClient(null); }}
           />
 
@@ -549,12 +746,13 @@ export default function HomeScreen() {
                     <ThemedText style={styles.rosterName}>{item.name}</ThemedText>
                   </View>
                   <TouchableOpacity
-                    style={[styles.rosterCheckInBtn, { backgroundColor: item.checkedIn ? '#28A745' : theme.surface }]}
+                    style={[styles.rosterCheckInBtn, { backgroundColor: item.checkedIn ? theme.backgroundElement : theme.surface }]}
                     onPress={() => toggleRosterCheckIn(item)}
-                    activeOpacity={item.checkedIn ? 1 : 0.7}
+                    activeOpacity={0.7}
                   >
-                    <ThemedText style={[styles.rosterCheckInText, item.checkedIn && { color: '#FFF' }]}>
-                      {item.checkedIn ? 'Checked In' : 'Check In'}
+                    {item.checkedIn && <SymbolView name="arrow.uturn.backward" size={13} tintColor={theme.primary} />}
+                    <ThemedText style={[styles.rosterCheckInText, { color: item.checkedIn ? theme.primary : theme.text }]}>
+                      {item.checkedIn ? 'Undo' : 'Check In'}
                     </ThemedText>
                   </TouchableOpacity>
                 </View>
@@ -573,6 +771,8 @@ const styles = StyleSheet.create({
   container: { flex: 1 }, safeArea: { flex: 1 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, borderBottomWidth: 1 },
   headerTitle: { fontSize: 20, fontWeight: '800', textTransform: 'uppercase' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  headerIconButton: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
   todayButton: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: Spacing.two },
   calendarContainer: { height: 85 }, divider: { height: 1, marginVertical: Spacing.one },
   listContainer: { flex: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
@@ -589,7 +789,9 @@ const styles = StyleSheet.create({
   classTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
 
   cardActionContainer: { justifyContent: 'center', alignItems: 'flex-end', minWidth: 48 },
+  ptCheckedActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   ptCheckedBadge: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#28A745', alignItems: 'center', justifyContent: 'center' },
+  undoIconButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   inlineCheckInBtn: { minWidth: 86, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Spacing.two, alignItems: 'center' },
   inlineCheckInBtnLoading: { minHeight: 31, justifyContent: 'center' },
   inlineCheckInText: { fontWeight: '600', fontSize: 13 },
@@ -603,6 +805,9 @@ const styles = StyleSheet.create({
   sheetTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.three },
   inputLabel: { fontWeight: '600', marginBottom: 6, fontSize: 13 },
   input: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, fontSize: 15, marginBottom: Spacing.three },
+  modeSelector: { flexDirection: 'row', borderRadius: 8, padding: 3, marginBottom: Spacing.three },
+  modeOption: { flex: 1, minHeight: 34, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
+  modeOptionText: { fontSize: 13, fontWeight: '800' },
 
   autocompleteContainer: { maxHeight: 150, borderWidth: 1, borderRadius: Spacing.two, marginTop: -8, marginBottom: Spacing.three, overflow: 'hidden' },
   autocompleteItem: { padding: 12, borderBottomWidth: 1 },
@@ -614,6 +819,6 @@ const styles = StyleSheet.create({
   rosterHeader: { marginBottom: Spacing.three },
   rosterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1 },
   rosterName: { fontSize: 16, fontWeight: '600', marginBottom: 2 },
-  rosterCheckInBtn: { paddingHorizontal: Spacing.three, paddingVertical: 8, borderRadius: Spacing.two },
+  rosterCheckInBtn: { minWidth: 82, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: Spacing.three, paddingVertical: 8, borderRadius: Spacing.two },
   rosterCheckInText: { fontWeight: '700', fontSize: 13 },
 });

@@ -259,8 +259,62 @@ export default function ClientsScreen() {
       .update({ payment_status: 'paid' })
       .eq('id', clientPackageId);
 
-    if (error) Alert.alert('Database Error', error.message);
+    if (error) Alert.alert('Update Failed', 'Could not mark this package paid. Please try again.');
     else fetchData(editingClient.id);
+  };
+
+  const handleVoidPackage = (clientPackage: ClientPackageRow) => {
+    if (!editingClient) return;
+
+    Alert.alert('Void Package', 'Void this unpaid, unused package? This removes it from active balances but keeps it in history.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Void',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await supabase
+            .from('client_packages')
+            .update({ payment_status: 'voided', classes_remaining: 0 })
+            .eq('id', clientPackage.id);
+
+          if (error) Alert.alert('Void Failed', 'Could not void this package. Please try again.');
+          else fetchData(editingClient.id);
+        },
+      },
+    ]);
+  };
+
+  const handleAdjustPackageCredits = (clientPackage: ClientPackageRow) => {
+    if (!editingClient) return;
+
+    Alert.prompt(
+      'Adjust Credits',
+      'Enter the corrected number of remaining credits.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Save',
+          onPress: async (value?: string) => {
+            const nextCredits = Number.parseInt(value ?? '', 10);
+
+            if (!Number.isFinite(nextCredits) || nextCredits < 0) {
+              return Alert.alert('Invalid Credits', 'Enter a whole number of 0 or more.');
+            }
+
+            const { error } = await supabase
+              .from('client_packages')
+              .update({ classes_remaining: nextCredits })
+              .eq('id', clientPackage.id);
+
+            if (error) Alert.alert('Adjustment Failed', 'Could not update credits. Please try again.');
+            else fetchData(editingClient.id);
+          },
+        },
+      ],
+      'plain-text',
+      String(clientPackage.classes_remaining),
+      'number-pad'
+    );
   };
 
   const handleSave = async () => {
@@ -368,6 +422,8 @@ export default function ClientsScreen() {
     const status = getClientPackageStatus(clientPackage);
     const pkg = clientPackage.packages;
     const isUnpaid = clientPackage.payment_status === 'unpaid';
+    const isVoided = clientPackage.payment_status === 'voided';
+    const canVoid = isUnpaid && !!pkg && clientPackage.classes_remaining === pkg.total_classes;
     const serviceLabel = pkg ? getServiceLabel(pkg.service_type) : 'Package';
     const expirationText = clientPackage.expiration_date
       ? `Expires ${dayjs(clientPackage.expiration_date).format('MMM D, YYYY')}`
@@ -385,7 +441,7 @@ export default function ClientsScreen() {
           <ThemedText themeColor="textSecondary" style={styles.historyMeta}>
             {clientPackage.classes_remaining} left • {expirationText}
           </ThemedText>
-          <ThemedText style={[styles.historyStatus, { color: status.active ? '#28A745' : theme.primary }]}>
+          <ThemedText style={[styles.historyStatus, { color: isVoided ? theme.textSecondary : status.active ? '#28A745' : theme.primary }]}>
             {status.reason}
           </ThemedText>
         </View>
@@ -396,6 +452,17 @@ export default function ClientsScreen() {
             <ThemedText themeColor="textSecondary" style={styles.remainingLabel}>left</ThemedText>
           </View>
 
+          {!isVoided && (
+            <TouchableOpacity
+              style={[styles.historySmallButton, { backgroundColor: theme.backgroundElement, borderColor: theme.surface }]}
+              onPress={() => handleAdjustPackageCredits(clientPackage)}
+              activeOpacity={0.8}
+            >
+              <SymbolView name="slider.horizontal.3" size={14} tintColor={theme.textSecondary} />
+              <ThemedText style={[styles.historySmallButtonText, { color: theme.textSecondary }]}>Adjust</ThemedText>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity
             style={[
               styles.markPaidButton,
@@ -405,14 +472,25 @@ export default function ClientsScreen() {
               },
             ]}
             onPress={() => handleMarkPaid(clientPackage.id)}
-            disabled={!isUnpaid}
+            disabled={!isUnpaid || isVoided}
             activeOpacity={isUnpaid ? 0.8 : 1}
           >
             <SymbolView name="dollarsign.circle.fill" size={15} tintColor={isUnpaid ? '#FFFFFF' : theme.textSecondary} />
             <ThemedText style={[styles.markPaidText, { color: isUnpaid ? '#FFFFFF' : theme.textSecondary }]}>
-              {isUnpaid ? 'Pay' : 'Paid'}
+              {isUnpaid ? 'Mark Paid' : isVoided ? 'Voided' : 'Paid'}
             </ThemedText>
           </TouchableOpacity>
+
+          {canVoid && (
+            <TouchableOpacity
+              style={[styles.historySmallButton, { backgroundColor: theme.background, borderColor: theme.primary }]}
+              onPress={() => handleVoidPackage(clientPackage)}
+              activeOpacity={0.8}
+            >
+              <SymbolView name="xmark.circle.fill" size={14} tintColor={theme.primary} />
+              <ThemedText style={[styles.historySmallButtonText, { color: theme.primary }]}>Void</ThemedText>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
@@ -806,12 +884,14 @@ const styles = StyleSheet.create({
   historyServiceText: { fontSize: 11, fontWeight: '800' },
   historyMeta: { fontSize: 12, fontWeight: '600', marginBottom: 3 },
   historyStatus: { fontSize: 12, fontWeight: '800' },
-  historyActionColumn: { minWidth: 70, alignItems: 'stretch', gap: Spacing.two },
+  historyActionColumn: { width: 92, alignItems: 'stretch', gap: 6 },
   remainingBadge: { borderRadius: 8, paddingHorizontal: 8, paddingVertical: 6, alignItems: 'center' },
   remainingValue: { fontSize: 17, lineHeight: 20, fontWeight: '700', fontVariant: ['tabular-nums'] },
   remainingLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
-  markPaidButton: { borderWidth: 1, minWidth: 62, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 7, borderRadius: Spacing.two },
-  markPaidText: { fontSize: 12, fontWeight: '800' },
+  markPaidButton: { borderWidth: 1, minHeight: 30, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 6, borderRadius: Spacing.two },
+  markPaidText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
+  historySmallButton: { borderWidth: 1, minHeight: 28, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 5, borderRadius: Spacing.two },
+  historySmallButtonText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
   emptyHistoryText: { textAlign: 'center', paddingVertical: Spacing.three, fontWeight: '600' },
 
   saveButton: { paddingVertical: 13, borderRadius: Spacing.two, alignItems: 'center', marginTop: Spacing.two },

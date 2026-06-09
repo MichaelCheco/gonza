@@ -6,7 +6,7 @@ export const SERVICE_TYPES = {
 } as const;
 
 export type ServiceType = typeof SERVICE_TYPES[keyof typeof SERVICE_TYPES];
-export type PaymentStatus = 'paid' | 'unpaid' | string;
+export type PaymentStatus = 'paid' | 'unpaid' | 'voided' | string;
 
 export type PackageRow = {
   id: number;
@@ -30,7 +30,7 @@ export type ClientPackageRow = {
 
 export type PackageStatus = {
   active: boolean;
-  reason: 'Good to go' | 'Unpaid Balance' | 'Out of Classes' | 'Package Expired';
+  reason: 'Good to go' | 'Unpaid Balance' | 'Out of Classes' | 'Package Expired' | 'Voided';
 };
 
 export type ServiceSummary = {
@@ -59,6 +59,7 @@ export function getServiceLabel(serviceType: ServiceType): string {
 }
 
 export function getClientPackageStatus(clientPackage: Pick<ClientPackageRow, 'classes_remaining' | 'expiration_date' | 'payment_status'>): PackageStatus {
+  if (clientPackage.payment_status === 'voided') return { active: false, reason: 'Voided' };
   if (clientPackage.payment_status === 'unpaid') return { active: false, reason: 'Unpaid Balance' };
   if (clientPackage.classes_remaining <= 0) return { active: false, reason: 'Out of Classes' };
 
@@ -77,11 +78,15 @@ export function summarizePackagesByService(
   clientPackages: ClientPackageRow[],
   serviceType: ServiceType
 ): ServiceSummary {
-  const matchingPackages = clientPackages.filter((clientPackage) => clientPackage.packages?.service_type === serviceType);
+  const matchingPackages = clientPackages.filter((clientPackage) => (
+    clientPackage.packages?.service_type === serviceType &&
+    clientPackage.payment_status !== 'voided'
+  ));
   const activePackages = matchingPackages.filter(isClientPackageUsable);
   const unpaidCount = matchingPackages.filter((clientPackage) => clientPackage.payment_status === 'unpaid').length;
-  const expiredCount = matchingPackages.filter((clientPackage) => getClientPackageStatus(clientPackage).reason === 'Package Expired').length;
-  const outOfClassesCount = matchingPackages.filter((clientPackage) => getClientPackageStatus(clientPackage).reason === 'Out of Classes').length;
+  const statusByPackage = matchingPackages.map(getClientPackageStatus);
+  const expiredCount = statusByPackage.filter((status) => status.reason === 'Package Expired').length;
+  const outOfClassesCount = statusByPackage.filter((status) => status.reason === 'Out of Classes').length;
   const usableClasses = activePackages.reduce((sum, clientPackage) => sum + clientPackage.classes_remaining, 0);
 
   let reason = `${usableClasses} left`;
