@@ -4,7 +4,6 @@ import { DarkTheme, DefaultTheme, Tabs, ThemeProvider, useRouter, useSegments } 
 import { SymbolView } from 'expo-symbols';
 import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
-import 'react-native-gesture-handler';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { Colors } from '@/constants/theme';
@@ -31,7 +30,7 @@ function RootLayoutNav() {
       // Redirect authenticated users away from the auth screen
       router.replace('/');
     }
-  }, [session, segments]);
+  }, [router, session, segments]);
 
   // Optionally render a loading screen while session is `undefined`
   if (session === undefined) return null;
@@ -66,6 +65,7 @@ function RootLayoutNav() {
               name="clients"
               options={{
                 title: 'Clients',
+                lazy: false,
                 tabBarIcon: ({ color }) => (
                   <SymbolView name="person.3.fill" size={24} tintColor={color} />
                 ),

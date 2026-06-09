@@ -17,8 +17,8 @@ import { BottomSheetBackdrop, BottomSheetModal, BottomSheetTextInput, BottomShee
 import dayjs from 'dayjs';
 import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../utils/supabase';
 
@@ -51,6 +51,8 @@ export default function ClientsScreen() {
   const [phone, setPhone] = useState('');
 
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
+  const hasLoadedRef = useRef(false);
+  const fetchingRef = useRef(false);
   const snapPoints = useMemo(() => ['85%'], []);
 
   const renderBackdrop = useCallback(
@@ -70,57 +72,67 @@ export default function ClientsScreen() {
   }, []);
 
   const fetchData = useCallback(async (focusedClientId?: number) => {
-    setLoading(true);
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+    if (!hasLoadedRef.current) setLoading(true);
 
-    const [clientsRes, packagesRes] = await Promise.all([
-      supabase
-        .from('clients')
-        .select(`
-          id, first_name, last_name, phone,
-          client_packages (
-            id, client_id, package_id, classes_remaining, start_date, expiration_date, payment_status,
-            packages ( id, name, price, total_classes, expires_in_weeks, service_type )
-          )
-        `)
-        .order('first_name', { ascending: true }),
-      supabase
-        .from('packages')
-        .select('id, name, price, total_classes, expires_in_weeks, service_type')
-        .order('service_type', { ascending: true })
-        .order('id', { ascending: true }),
-    ]);
+    try {
+      const [clientsRes, packagesRes] = await Promise.all([
+        supabase
+          .from('clients')
+          .select(`
+            id, first_name, last_name, phone,
+            client_packages (
+              id, client_id, package_id, classes_remaining, start_date, expiration_date, payment_status,
+              packages ( id, name, price, total_classes, expires_in_weeks, service_type )
+            )
+          `)
+          .order('first_name', { ascending: true }),
+        supabase
+          .from('packages')
+          .select('id, name, price, total_classes, expires_in_weeks, service_type')
+          .order('service_type', { ascending: true })
+          .order('id', { ascending: true }),
+      ]);
 
-    if (packagesRes.error) {
-      console.error('Packages Fetch Error:', packagesRes.error);
-      Alert.alert('Packages Error', packagesRes.error.message);
-    } else if (packagesRes.data) {
-      const packageRows = packagesRes.data as PackageRow[];
-      setPackages(packageRows);
-      setSelectedPackageId((currentId) => {
-        if (currentId && packageRows.some((pkg) => pkg.id === currentId)) return currentId;
-        return packageRows[0]?.id ?? null;
-      });
-    }
-
-    if (clientsRes.error) {
-      console.error('Clients Fetch Error:', clientsRes.error);
-      Alert.alert('Clients Error', clientsRes.error.message);
-    } else if (clientsRes.data) {
-      const processedClients = clientsRes.data.map(decorateClient);
-      setClients(processedClients);
-
-      if (focusedClientId) {
-        const refreshedClient = processedClients.find((client) => client.id === focusedClientId) ?? null;
-        setEditingClient(refreshedClient);
+      if (packagesRes.error) {
+        console.error('Packages Fetch Error:', packagesRes.error);
+        Alert.alert('Packages Error', packagesRes.error.message);
+      } else if (packagesRes.data) {
+        const packageRows = packagesRes.data as PackageRow[];
+        setPackages(packageRows);
+        setSelectedPackageId((currentId) => {
+          if (currentId && packageRows.some((pkg) => pkg.id === currentId)) return currentId;
+          return packageRows[0]?.id ?? null;
+        });
       }
-    }
 
-    setLoading(false);
+      if (clientsRes.error) {
+        console.error('Clients Fetch Error:', clientsRes.error);
+        Alert.alert('Clients Error', clientsRes.error.message);
+      } else if (clientsRes.data) {
+        const processedClients = clientsRes.data.map(decorateClient);
+        setClients(processedClients);
+
+        if (focusedClientId) {
+          const refreshedClient = processedClients.find((client) => client.id === focusedClientId) ?? null;
+          setEditingClient(refreshedClient);
+        }
+      }
+    } finally {
+      hasLoadedRef.current = true;
+      fetchingRef.current = false;
+      setLoading(false);
+    }
   }, [decorateClient]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchData();
+      if (hasLoadedRef.current) fetchData();
     }, [fetchData])
   );
 
@@ -507,6 +519,30 @@ export default function ClientsScreen() {
     );
   };
 
+  const renderLoadingSkeleton = () => (
+    <View style={styles.skeletonList}>
+      {[0, 1, 2].map((item) => (
+        <ThemedView key={item} type="surface" style={styles.skeletonCard}>
+          <View style={[styles.skeletonLineLarge, { backgroundColor: theme.backgroundElement }]} />
+          <View style={[styles.skeletonLineSmall, { backgroundColor: theme.backgroundElement }]} />
+          <View style={[styles.skeletonDivider, { backgroundColor: theme.backgroundElement }]} />
+          <View style={styles.skeletonBalanceRow}>
+            <View style={styles.skeletonBalance}>
+              <View style={[styles.skeletonAccent, { backgroundColor: theme.backgroundSelected }]} />
+              <View style={[styles.skeletonLineTiny, { backgroundColor: theme.backgroundElement }]} />
+              <View style={[styles.skeletonLineMedium, { backgroundColor: theme.backgroundElement }]} />
+            </View>
+            <View style={styles.skeletonBalance}>
+              <View style={[styles.skeletonAccent, { backgroundColor: theme.backgroundSelected }]} />
+              <View style={[styles.skeletonLineTiny, { backgroundColor: theme.backgroundElement }]} />
+              <View style={[styles.skeletonLineMedium, { backgroundColor: theme.backgroundElement }]} />
+            </View>
+          </View>
+        </ThemedView>
+      ))}
+    </View>
+  );
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -538,18 +574,20 @@ export default function ClientsScreen() {
           {renderFilterChip('noCredits', 'No Credits', clientMetrics.noCredits)}
         </ScrollView>
 
-        {loading ? (
-          <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
-        ) : (
-          <FlatList
-            data={filteredClients}
-            keyExtractor={(item) => item.id.toString()}
-            renderItem={renderClientCard}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={<ThemedText themeColor="textSecondary" style={styles.emptyText}>No clients found.</ThemedText>}
-          />
-        )}
+        <FlatList
+          data={loading ? [] : filteredClients}
+          keyExtractor={(item) => item.id.toString()}
+          renderItem={renderClientCard}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            loading ? (
+              renderLoadingSkeleton()
+            ) : (
+              <ThemedText themeColor="textSecondary" style={styles.emptyText}>No clients found.</ThemedText>
+            )
+          }
+        />
 
         <TouchableOpacity style={[styles.fab, { backgroundColor: theme.primary }]} activeOpacity={0.8} onPress={handleAddClient}>
           <SymbolView name="person.badge.plus.fill" size={22} tintColor="#FFFFFF" />
@@ -709,6 +747,16 @@ const styles = StyleSheet.create({
   attentionRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 
   emptyText: { textAlign: 'center', marginTop: Spacing.five },
+  skeletonList: { gap: 12 },
+  skeletonCard: { padding: 16, borderRadius: 8, gap: 8, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
+  skeletonLineLarge: { width: '48%', height: 18, borderRadius: 4 },
+  skeletonLineSmall: { width: '34%', height: 14, borderRadius: 4 },
+  skeletonDivider: { height: 1, marginTop: Spacing.two },
+  skeletonBalanceRow: { flexDirection: 'row', gap: Spacing.three, paddingTop: Spacing.two },
+  skeletonBalance: { flex: 1, minHeight: 38, paddingLeft: 10, justifyContent: 'center', gap: 6 },
+  skeletonAccent: { position: 'absolute', left: 0, top: 4, bottom: 4, width: 3, borderRadius: 2 },
+  skeletonLineTiny: { width: 42, height: 10, borderRadius: 4 },
+  skeletonLineMedium: { width: 58, height: 16, borderRadius: 4 },
   fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
 
   sheetContent: { flex: 1, padding: Spacing.four, paddingTop: Spacing.two },
