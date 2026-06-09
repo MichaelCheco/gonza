@@ -32,13 +32,6 @@ type CheckInState = {
   message?: string;
 };
 
-// Keeping Roster mock for now until we build step 3
-const MOCK_ROSTER = [
-  { id: '1', name: 'John Doe', status: 'paid', checkedIn: false },
-  { id: '2', name: 'Jane Smith', status: 'unpaid', checkedIn: false },
-  { id: '4', name: 'Apollo Creed', status: 'paid', checkedIn: true }
-];
-
 export default function HomeScreen() {
   const theme = useTheme();
   const todayString = dayjs().format('YYYY-MM-DD');
@@ -142,7 +135,7 @@ export default function HomeScreen() {
   }, []);
 
   // --- 2. Fetch Classes dynamically when selectedDate changes ---
-  const fetchClasses = async () => {
+  const fetchClasses = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('classes')
@@ -181,12 +174,13 @@ export default function HomeScreen() {
       setPtCheckInStates({});
     }
     setLoading(false);
-  };
+  }, [selectedDate]);
 
   // Re-fetch whenever the calendar date is tapped
   useEffect(() => {
-    fetchClasses();
-  }, [selectedDate]);
+    const timeoutId = setTimeout(fetchClasses, 0);
+    return () => clearTimeout(timeoutId);
+  }, [fetchClasses]);
 
   const filteredClients = useMemo(() => {
     if (!clientQuery || selectedClient) return [];
@@ -372,25 +366,31 @@ export default function HomeScreen() {
               </View>
               <View style={styles.cardActionContainer}>
                 {isPT ? (
-                  <TouchableOpacity
-                    style={[
-                      styles.inlineCheckInBtn,
-                      { backgroundColor: isCheckedIn ? '#28A745' : theme.backgroundElement },
-                      isCheckingIn && styles.inlineCheckInBtnLoading,
-                    ]}
-                    onPress={() => handlePTCheckIn(item)}
-                    activeOpacity={isCheckedIn ? 1 : 0.7}
-                    disabled={isCheckingIn || isCheckedIn}
-                  >
-                    {isCheckingIn ? (
-                      <ActivityIndicator size="small" color={theme.text} />
+                  <>
+                    {isCheckedIn ? (
+                      <View style={styles.ptCheckedBadge} accessibilityLabel="Checked in">
+                        <SymbolView name="checkmark" size={17} tintColor="#FFFFFF" />
+                      </View>
                     ) : (
-                      <ThemedText style={[styles.inlineCheckInText, { color: isCheckedIn ? '#FFFFFF' : theme.text }]}>
-                        {isCheckedIn ? 'Checked In' : 'Check In'}
-                      </ThemedText>
+                      <TouchableOpacity
+                        style={[
+                          styles.inlineCheckInBtn,
+                          { backgroundColor: theme.backgroundElement },
+                          isCheckingIn && styles.inlineCheckInBtnLoading,
+                        ]}
+                        onPress={() => handlePTCheckIn(item)}
+                        activeOpacity={0.7}
+                        disabled={isCheckingIn}
+                      >
+                        {isCheckingIn ? (
+                          <ActivityIndicator size="small" color={theme.text} />
+                        ) : (
+                          <ThemedText style={[styles.inlineCheckInText, { color: theme.text }]}>Check In</ThemedText>
+                        )}
+                      </TouchableOpacity>
                     )}
                     {checkInError && <ThemedText style={[styles.inlineCheckInError, { color: theme.primary }]}>{checkInError}</ThemedText>}
-                  </TouchableOpacity>
+                  </>
                 ) : (
                   <View style={styles.rosterChevron}>
                     <SymbolView name="chevron.right" size={14} tintColor={theme.textSecondary} />
@@ -588,7 +588,8 @@ const styles = StyleSheet.create({
   detailsContainer: { flex: 1 },
   classTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
 
-  cardActionContainer: { justifyContent: 'center', alignItems: 'flex-end', minWidth: 60 },
+  cardActionContainer: { justifyContent: 'center', alignItems: 'flex-end', minWidth: 48 },
+  ptCheckedBadge: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#28A745', alignItems: 'center', justifyContent: 'center' },
   inlineCheckInBtn: { minWidth: 86, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Spacing.two, alignItems: 'center' },
   inlineCheckInBtnLoading: { minHeight: 31, justifyContent: 'center' },
   inlineCheckInText: { fontWeight: '600', fontSize: 13 },
