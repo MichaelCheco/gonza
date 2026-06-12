@@ -4,6 +4,11 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "development": {
+      "ios": {
+        "simulator": true
+      }
+    },
     "production": {
       "autoIncrement": true,
       "ios": {

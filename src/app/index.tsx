@@ -214,13 +214,17 @@ export default function HomeScreen() {
 
   // --- Action Handlers ---
   const handleCardPress = (session: SessionType) => {
+    const isCheckedIn = session.checkedIn || ptCheckInStates[session.id]?.status === 'success';
+
     if (session.type === 'Group') {
       setSelectedGroupClass(session);
       setRosterSearchQuery('');
       setAddWalkInQuery('');
       fetchRoster(session.id); // <-- Fetch real data
       rosterSheetRef.current?.present();
-    } else if (!session.checkedIn) {
+    } else if (isCheckedIn) {
+      handlePTUndoCheckIn(session);
+    } else {
       handlePTCheckIn(session);
     }
   };
@@ -484,13 +488,15 @@ export default function HomeScreen() {
     if (item.type === 'Group') return null;
     const isCheckedIn = item.checkedIn || ptCheckInStates[item.id]?.status === 'success';
 
+    if (isCheckedIn) return null;
+
     return (
       <TouchableOpacity
-        style={[styles.swipeAction, { backgroundColor: isCheckedIn ? theme.primary : '#28A745', marginRight: Spacing.two }]}
-        onPress={() => isCheckedIn ? handlePTUndoCheckIn(item) : handlePTCheckIn(item)}
+        style={[styles.swipeAction, { backgroundColor: '#28A745', marginRight: Spacing.two }]}
+        onPress={() => handlePTCheckIn(item)}
         activeOpacity={0.8}
       >
-        <SymbolView name={isCheckedIn ? 'arrow.uturn.backward.circle.fill' : 'checkmark.circle.fill'} size={22} tintColor="#FFFFFF" />
+        <SymbolView name="checkmark.circle.fill" size={22} tintColor="#FFFFFF" />
       </TouchableOpacity>
     );
   };
@@ -520,22 +526,15 @@ export default function HomeScreen() {
                 <ThemedText style={styles.classTitle}>{item.title}</ThemedText>
                 <ThemedText themeColor="textSecondary" type="small">{item.type}</ThemedText>
               </View>
-              <View style={styles.cardActionContainer}>
+              <View style={[styles.cardActionContainer, isPT && isCheckedIn && styles.cardActionContainerBadge]}>
                 {isPT ? (
                   <>
                     {isCheckedIn ? (
-                      <View style={styles.ptCheckedActions}>
-                        <View style={styles.ptCheckedBadge} accessibilityLabel="Checked in">
-                          <SymbolView name="checkmark" size={17} tintColor="#FFFFFF" />
-                        </View>
-                        <TouchableOpacity
-                          style={[styles.undoIconButton, { backgroundColor: theme.backgroundElement }]}
-                          onPress={() => handlePTUndoCheckIn(item)}
-                          activeOpacity={0.75}
-                          accessibilityLabel="Undo PT check-in"
-                        >
-                          <SymbolView name="arrow.uturn.backward" size={15} tintColor={theme.primary} />
-                        </TouchableOpacity>
+                      <View
+                        style={[styles.ptCheckedBadge, { backgroundColor: theme.backgroundSelected, borderColor: theme.surface }]}
+                        accessibilityLabel="Checked in"
+                      >
+                        <SymbolView name="checkmark" size={12} tintColor={theme.textSecondary} />
                       </View>
                     ) : (
                       <TouchableOpacity
@@ -789,9 +788,8 @@ const styles = StyleSheet.create({
   classTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
 
   cardActionContainer: { justifyContent: 'center', alignItems: 'flex-end', minWidth: 48 },
-  ptCheckedActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  ptCheckedBadge: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#28A745', alignItems: 'center', justifyContent: 'center' },
-  undoIconButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  cardActionContainerBadge: { justifyContent: 'flex-start', alignSelf: 'stretch', minWidth: 30 },
+  ptCheckedBadge: { width: 22, height: 22, borderRadius: 11, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   inlineCheckInBtn: { minWidth: 86, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Spacing.two, alignItems: 'center' },
   inlineCheckInBtnLoading: { minHeight: 31, justifyContent: 'center' },
   inlineCheckInText: { fontWeight: '600', fontSize: 13 },
