@@ -451,7 +451,7 @@ export default function ClientsScreen() {
   };
 
   const getServiceStatusLabel = (summary: ServiceSummary) => {
-    if (summary.unpaidCount > 0) return `${summary.label} unpaid`;
+    if (summary.unpaidCount > 0) return summary.label;
     if (summary.totalCount === 0) return `${summary.label} -`;
     if (summary.usableClasses > 0) return `${summary.label} ${summary.usableClasses}`;
     return `${summary.label} 0`;
@@ -461,8 +461,8 @@ export default function ClientsScreen() {
     if (summary.unpaidCount > 0) {
       return {
         background: theme.backgroundElement,
-        border: theme.warning,
-        text: theme.warning,
+        border: theme.backgroundSelected,
+        text: theme.text,
       };
     }
 
