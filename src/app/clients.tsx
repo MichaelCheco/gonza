@@ -7,6 +7,8 @@ import {
   ClientPackageRow,
   getClientPackageStatus,
   getServiceLabel,
+  isClientPackageUnpaid,
+  isFirstClassFreePackage,
   PackageRow,
   SERVICE_TYPES,
   ServiceSummary,
@@ -19,7 +21,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from 'expo-router';
 import { AppSymbol } from '@/components/app-symbol';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../utils/supabase';
 
@@ -61,6 +63,9 @@ export default function ClientsScreen() {
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [phoneCopied, setPhoneCopied] = useState(false);
+  const [adjustingPackageId, setAdjustingPackageId] = useState<number | null>(null);
+  const [adjustedCredits, setAdjustedCredits] = useState('');
+  const [savingPackageActionId, setSavingPackageActionId] = useState<number | null>(null);
 
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const hasLoadedRef = useRef(false);
@@ -163,7 +168,7 @@ export default function ClientsScreen() {
   );
 
   const getClientAttention = useCallback((client: ClientRecord) => {
-    const hasUnpaid = client.client_packages.some((clientPackage) => clientPackage.payment_status === 'unpaid');
+    const hasUnpaid = client.client_packages.some(isClientPackageUnpaid);
     const hasUsableCredits = client.packageSummaries.some((summary) => summary.usableClasses > 0);
     const hasPackageHistory = client.client_packages.length > 0;
 
@@ -227,7 +232,7 @@ export default function ClientsScreen() {
       classes_remaining: pkg.total_classes,
       start_date: startDate,
       expiration_date: calculateExpirationDateFromPackage(pkg, startDate),
-      payment_status: 'unpaid',
+      payment_status: isFirstClassFreePackage(pkg) ? 'paid' : 'unpaid',
     };
   };
 
@@ -236,6 +241,9 @@ export default function ClientsScreen() {
     setFullName('');
     setPhone('');
     setPhoneCopied(false);
+    setAdjustingPackageId(null);
+    setAdjustedCredits('');
+    setSavingPackageActionId(null);
     setSelectedPackageId(packages[0]?.id ?? null);
     bottomSheetModalRef.current?.present();
   };
@@ -245,6 +253,9 @@ export default function ClientsScreen() {
     setFullName(client.name);
     setPhone(formatPhoneNumber(client.phone));
     setPhoneCopied(false);
+    setAdjustingPackageId(null);
+    setAdjustedCredits('');
+    setSavingPackageActionId(null);
     setSelectedPackageId(packages[0]?.id ?? null);
     bottomSheetModalRef.current?.present();
   };
@@ -272,7 +283,7 @@ export default function ClientsScreen() {
       'Add Package',
       `Add ${packageToAdd.name} to ${editingClient.name}?\n\nCredits: ${packageToAdd.total_classes}\nExpires: ${
         packageToAdd.expires_in_weeks ? `${packageToAdd.expires_in_weeks} weeks` : 'Never'
-      }\nPayment: Unpaid`,
+      }\nPayment: ${isFirstClassFreePackage(packageToAdd) ? 'Included' : 'Unpaid'}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -288,16 +299,27 @@ export default function ClientsScreen() {
     );
   };
 
-  const handleMarkPaid = async (clientPackageId: number) => {
+  const handleMarkPaid = async (clientPackage: ClientPackageRow) => {
     if (!editingClient) return;
+    if (!isClientPackageUnpaid(clientPackage)) return;
+
+    setSavingPackageActionId(clientPackage.id);
 
     const { error } = await supabase
       .from('client_packages')
       .update({ payment_status: 'paid' })
-      .eq('id', clientPackageId);
+      .eq('id', clientPackage.id)
+      .select('id')
+      .single();
 
-    if (error) Alert.alert('Update Failed', 'Could not mark this package paid. Please try again.');
-    else fetchData(editingClient.id);
+    setSavingPackageActionId(null);
+
+    if (error) {
+      Alert.alert('Update Failed', 'Could not mark this package paid. Please try again.');
+      return;
+    }
+
+    fetchData(editingClient.id);
   };
 
   const handleVoidPackage = (clientPackage: ClientPackageRow) => {
@@ -322,36 +344,43 @@ export default function ClientsScreen() {
   };
 
   const handleAdjustPackageCredits = (clientPackage: ClientPackageRow) => {
+    setAdjustingPackageId(clientPackage.id);
+    setAdjustedCredits(String(clientPackage.classes_remaining));
+  };
+
+  const handleCancelPackageAdjustment = () => {
+    setAdjustingPackageId(null);
+    setAdjustedCredits('');
+  };
+
+  const handleSavePackageAdjustment = async (clientPackage: ClientPackageRow) => {
     if (!editingClient) return;
 
-    Alert.prompt(
-      'Adjust Credits',
-      'Enter the corrected number of remaining credits.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Save',
-          onPress: async (value?: string) => {
-            const nextCredits = Number.parseInt(value ?? '', 10);
+    const nextCredits = Number.parseInt(adjustedCredits.trim(), 10);
 
-            if (!Number.isFinite(nextCredits) || nextCredits < 0) {
-              return Alert.alert('Invalid Credits', 'Enter a whole number of 0 or more.');
-            }
+    if (!Number.isFinite(nextCredits) || nextCredits < 0) {
+      Alert.alert('Invalid Credits', 'Enter a whole number of 0 or more.');
+      return;
+    }
 
-            const { error } = await supabase
-              .from('client_packages')
-              .update({ classes_remaining: nextCredits })
-              .eq('id', clientPackage.id);
+    setSavingPackageActionId(clientPackage.id);
 
-            if (error) Alert.alert('Adjustment Failed', 'Could not update credits. Please try again.');
-            else fetchData(editingClient.id);
-          },
-        },
-      ],
-      'plain-text',
-      String(clientPackage.classes_remaining),
-      'number-pad'
-    );
+    const { error } = await supabase
+      .from('client_packages')
+      .update({ classes_remaining: nextCredits })
+      .eq('id', clientPackage.id)
+      .select('id')
+      .single();
+
+    setSavingPackageActionId(null);
+
+    if (error) {
+      Alert.alert('Adjustment Failed', 'Could not update credits. Please try again.');
+      return;
+    }
+
+    handleCancelPackageAdjustment();
+    fetchData(editingClient.id);
   };
 
   const handleSave = async () => {
@@ -523,77 +552,124 @@ export default function ClientsScreen() {
   const renderPackageHistoryRow = (clientPackage: ClientPackageRow) => {
     const status = getClientPackageStatus(clientPackage);
     const pkg = clientPackage.packages;
-    const isUnpaid = clientPackage.payment_status === 'unpaid';
+    const isUnpaid = isClientPackageUnpaid(clientPackage);
     const isVoided = clientPackage.payment_status === 'voided';
     const canVoid = isUnpaid && !!pkg && clientPackage.classes_remaining === pkg.total_classes;
+    const isAdjusting = adjustingPackageId === clientPackage.id;
+    const isSaving = savingPackageActionId === clientPackage.id;
     const serviceLabel = pkg ? getServiceLabel(pkg.service_type) : 'Package';
     const expirationText = clientPackage.expiration_date
       ? `Expires ${dayjs(clientPackage.expiration_date).format('MMM D, YYYY')}`
       : 'No expiration';
 
     return (
-      <View key={clientPackage.id} style={[styles.historyRow, { borderColor: theme.surface, backgroundColor: theme.background }]}>
-        <View style={styles.historyMain}>
-          <View style={styles.historyTitleRow}>
-            <ThemedText style={styles.historyTitle}>{pkg?.name ?? 'Unknown Package'}</ThemedText>
-            <View style={[styles.historyServicePill, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText style={styles.historyServiceText}>{serviceLabel}</ThemedText>
+      <View key={clientPackage.id} style={[styles.historyCard, { borderColor: theme.surface, backgroundColor: theme.background }]}>
+        <View style={styles.historyRow}>
+          <View style={styles.historyMain}>
+            <View style={styles.historyTitleRow}>
+              <ThemedText style={styles.historyTitle}>{pkg?.name ?? 'Unknown Package'}</ThemedText>
+              <View style={[styles.historyServicePill, { backgroundColor: theme.backgroundElement }]}>
+                <ThemedText style={styles.historyServiceText}>{serviceLabel}</ThemedText>
+              </View>
             </View>
-          </View>
-          <ThemedText themeColor="textSecondary" style={styles.historyMeta}>
-            {clientPackage.classes_remaining} left • {expirationText}
-          </ThemedText>
-          <ThemedText style={[styles.historyStatus, { color: isVoided ? theme.textSecondary : status.active ? theme.success : theme.primary }]}>
-            {status.reason}
-          </ThemedText>
-        </View>
-
-        <View style={styles.historyActionColumn}>
-          <View style={[styles.remainingBadge, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText style={styles.remainingValue}>{clientPackage.classes_remaining}</ThemedText>
-            <ThemedText themeColor="textSecondary" style={styles.remainingLabel}>left</ThemedText>
-          </View>
-
-          {!isVoided && (
-            <TouchableOpacity
-              style={[styles.historySmallButton, { backgroundColor: theme.backgroundElement, borderColor: theme.surface }]}
-              onPress={() => handleAdjustPackageCredits(clientPackage)}
-              activeOpacity={0.8}
-            >
-              <AppSymbol name="slider.horizontal.3" size={14} tintColor={theme.textSecondary} />
-              <ThemedText style={[styles.historySmallButtonText, { color: theme.textSecondary }]}>Adjust</ThemedText>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={[
-              styles.markPaidButton,
-              {
-                backgroundColor: isUnpaid ? theme.success : theme.control,
-                borderColor: isUnpaid ? theme.success : theme.surface,
-              },
-            ]}
-            onPress={() => handleMarkPaid(clientPackage.id)}
-            disabled={!isUnpaid || isVoided}
-            activeOpacity={isUnpaid ? 0.8 : 1}
-          >
-            <AppSymbol name="dollarsign.circle.fill" size={15} tintColor={isUnpaid ? theme.onSuccess : theme.textSecondary} />
-            <ThemedText style={[styles.markPaidText, { color: isUnpaid ? theme.onSuccess : theme.textSecondary }]}>
-              {isUnpaid ? 'Mark Paid' : isVoided ? 'Voided' : 'Paid'}
+            <ThemedText themeColor="textSecondary" style={styles.historyMeta}>
+              {clientPackage.classes_remaining} left • {expirationText}
             </ThemedText>
-          </TouchableOpacity>
+            <ThemedText style={[styles.historyStatus, { color: isVoided ? theme.textSecondary : status.active ? theme.success : theme.primary }]}>
+              {status.reason}
+            </ThemedText>
+          </View>
 
-          {canVoid && (
+          <View style={styles.historyActionColumn}>
+            <View style={[styles.remainingBadge, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText style={styles.remainingValue}>{clientPackage.classes_remaining}</ThemedText>
+              <ThemedText themeColor="textSecondary" style={styles.remainingLabel}>left</ThemedText>
+            </View>
+
+            {!isVoided && (
+              <TouchableOpacity
+                style={[styles.historySmallButton, { backgroundColor: theme.backgroundElement, borderColor: theme.surface }]}
+                onPress={() => handleAdjustPackageCredits(clientPackage)}
+                activeOpacity={0.8}
+                disabled={isSaving}
+              >
+                <AppSymbol name="slider.horizontal.3" size={14} tintColor={theme.textSecondary} />
+                <ThemedText style={[styles.historySmallButtonText, { color: theme.textSecondary }]}>Adjust</ThemedText>
+              </TouchableOpacity>
+            )}
+
+            {isUnpaid ? (
+              <TouchableOpacity
+                style={[styles.markPaidButton, { backgroundColor: theme.success, borderColor: theme.success }]}
+                onPress={() => handleMarkPaid(clientPackage)}
+                disabled={isSaving}
+                activeOpacity={0.8}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color={theme.onSuccess} />
+                ) : (
+                  <>
+                    <AppSymbol name="dollarsign.circle.fill" size={15} tintColor={theme.onSuccess} />
+                    <ThemedText style={[styles.markPaidText, { color: theme.onSuccess }]}>Mark Paid</ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={[styles.historyStatusPill, { backgroundColor: theme.control, borderColor: theme.surface }]}>
+                <ThemedText style={[styles.historyStatusPillText, { color: theme.textSecondary }]}>
+                  {isVoided ? 'Voided' : 'Paid'}
+                </ThemedText>
+              </View>
+            )}
+
+            {canVoid && (
+              <TouchableOpacity
+                style={[styles.historySmallButton, { backgroundColor: theme.background, borderColor: theme.primary }]}
+                onPress={() => handleVoidPackage(clientPackage)}
+                activeOpacity={0.8}
+                disabled={isSaving}
+              >
+                <AppSymbol name="xmark.circle.fill" size={14} tintColor={theme.primary} />
+                <ThemedText style={[styles.historySmallButtonText, { color: theme.primary }]}>Void</ThemedText>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {isAdjusting && (
+          <View style={[styles.adjustCreditsPanel, { borderTopColor: theme.surface }]}>
+            <View style={styles.adjustCreditsInputColumn}>
+              <ThemedText themeColor="textSecondary" style={styles.adjustCreditsLabel}>Credits remaining</ThemedText>
+              <BottomSheetTextInput
+                style={[styles.adjustCreditsInput, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.backgroundElement }]}
+                value={adjustedCredits}
+                onChangeText={setAdjustedCredits}
+                keyboardType="number-pad"
+                selectTextOnFocus
+              />
+            </View>
             <TouchableOpacity
-              style={[styles.historySmallButton, { backgroundColor: theme.background, borderColor: theme.primary }]}
-              onPress={() => handleVoidPackage(clientPackage)}
+              style={[styles.adjustCreditsButton, { backgroundColor: theme.backgroundElement, borderColor: theme.surface }]}
+              onPress={handleCancelPackageAdjustment}
+              disabled={isSaving}
               activeOpacity={0.8}
             >
-              <AppSymbol name="xmark.circle.fill" size={14} tintColor={theme.primary} />
-              <ThemedText style={[styles.historySmallButtonText, { color: theme.primary }]}>Void</ThemedText>
+              <ThemedText style={[styles.adjustCreditsButtonText, { color: theme.textSecondary }]}>Cancel</ThemedText>
             </TouchableOpacity>
-          )}
-        </View>
+            <TouchableOpacity
+              style={[styles.adjustCreditsButton, { backgroundColor: theme.primary, borderColor: theme.primary }]}
+              onPress={() => handleSavePackageAdjustment(clientPackage)}
+              disabled={isSaving}
+              activeOpacity={0.8}
+            >
+              {isSaving ? (
+                <ActivityIndicator size="small" color={theme.onPrimary} />
+              ) : (
+                <ThemedText style={[styles.adjustCreditsButtonText, { color: theme.onPrimary }]}>Save</ThemedText>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   };
@@ -987,7 +1063,8 @@ const styles = StyleSheet.create({
   radioMark: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
   radioMarkInner: { width: 12, height: 12, borderRadius: 6 },
 
-  historyRow: { borderWidth: 1, borderRadius: 8, padding: 12, marginBottom: Spacing.two, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  historyCard: { borderWidth: 1, borderRadius: 8, padding: 12, marginBottom: Spacing.two, gap: Spacing.two },
+  historyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   historyMain: { flex: 1 },
   historyTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: Spacing.two, marginBottom: 4 },
   historyTitle: { fontSize: 14, fontWeight: '800' },
@@ -1001,8 +1078,16 @@ const styles = StyleSheet.create({
   remainingLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
   markPaidButton: { borderWidth: 1, minHeight: 30, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 6, borderRadius: Spacing.two },
   markPaidText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
+  historyStatusPill: { borderWidth: 1, minHeight: 30, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 6, borderRadius: Spacing.two },
+  historyStatusPillText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
   historySmallButton: { borderWidth: 1, minHeight: 28, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 5, borderRadius: Spacing.two },
   historySmallButtonText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
+  adjustCreditsPanel: { borderTopWidth: 1, paddingTop: Spacing.two, flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.two },
+  adjustCreditsInputColumn: { flex: 1, gap: 4 },
+  adjustCreditsLabel: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
+  adjustCreditsInput: { borderWidth: 1, borderRadius: Spacing.two, minHeight: 36, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15, fontWeight: '700' },
+  adjustCreditsButton: { minWidth: 68, minHeight: 36, borderWidth: 1, borderRadius: Spacing.two, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 10 },
+  adjustCreditsButtonText: { fontSize: 12, lineHeight: 14, fontWeight: '900' },
   emptyHistoryText: { textAlign: 'center', paddingVertical: Spacing.three, fontWeight: '600' },
 
   saveButton: { paddingVertical: 13, borderRadius: Spacing.two, alignItems: 'center', marginTop: Spacing.two },

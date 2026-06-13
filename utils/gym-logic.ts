@@ -46,6 +46,16 @@ export type ServiceSummary = {
   reason: string;
 };
 
+const normalizePackageName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export function isFirstClassFreePackage(pkg: Pick<PackageRow, 'name'> | null | undefined): boolean {
+  return normalizePackageName(pkg?.name ?? '') === 'First Class Free';
+}
+
+export function isClientPackageUnpaid(clientPackage: Pick<ClientPackageRow, 'payment_status' | 'packages'>): boolean {
+  return clientPackage.payment_status === 'unpaid' && !isFirstClassFreePackage(clientPackage.packages);
+}
+
 export function calculateExpirationDateFromPackage(
   pkg: Pick<PackageRow, 'expires_in_weeks'>,
   startDate: string | Date = new Date()
@@ -58,9 +68,9 @@ export function getServiceLabel(serviceType: ServiceType): string {
   return serviceType === SERVICE_TYPES.PERSONAL_TRAINING ? 'PT' : 'Group';
 }
 
-export function getClientPackageStatus(clientPackage: Pick<ClientPackageRow, 'classes_remaining' | 'expiration_date' | 'payment_status'>): PackageStatus {
+export function getClientPackageStatus(clientPackage: Pick<ClientPackageRow, 'classes_remaining' | 'expiration_date' | 'payment_status' | 'packages'>): PackageStatus {
   if (clientPackage.payment_status === 'voided') return { active: false, reason: 'Voided' };
-  if (clientPackage.payment_status === 'unpaid') return { active: false, reason: 'Unpaid Balance' };
+  if (isClientPackageUnpaid(clientPackage)) return { active: false, reason: 'Unpaid Balance' };
   if (clientPackage.classes_remaining <= 0) return { active: false, reason: 'Out of Classes' };
 
   if (clientPackage.expiration_date && dayjs().isAfter(dayjs(clientPackage.expiration_date).endOf('day'))) {
@@ -70,7 +80,7 @@ export function getClientPackageStatus(clientPackage: Pick<ClientPackageRow, 'cl
   return { active: true, reason: 'Good to go' };
 }
 
-export function isClientPackageUsable(clientPackage: Pick<ClientPackageRow, 'classes_remaining' | 'expiration_date' | 'payment_status'>): boolean {
+export function isClientPackageUsable(clientPackage: Pick<ClientPackageRow, 'classes_remaining' | 'expiration_date' | 'payment_status' | 'packages'>): boolean {
   return getClientPackageStatus(clientPackage).active;
 }
 
@@ -83,7 +93,7 @@ export function summarizePackagesByService(
     clientPackage.payment_status !== 'voided'
   ));
   const activePackages = matchingPackages.filter(isClientPackageUsable);
-  const unpaidCount = matchingPackages.filter((clientPackage) => clientPackage.payment_status === 'unpaid').length;
+  const unpaidCount = matchingPackages.filter(isClientPackageUnpaid).length;
   const statusByPackage = matchingPackages.map(getClientPackageStatus);
   const expiredCount = statusByPackage.filter((status) => status.reason === 'Package Expired').length;
   const outOfClassesCount = statusByPackage.filter((status) => status.reason === 'Out of Classes').length;
