@@ -3,6 +3,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
 import { AppSymbol } from '@/components/app-symbol';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Keyboard, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { CalendarProvider, WeekCalendar } from 'react-native-calendars';
@@ -13,20 +14,20 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import {
+  ClientOption,
+  fetchClassesByDate,
+  fetchClients,
+  fetchRoster,
+  gymQueryKeys,
+  SessionType,
+  toClientOption,
+} from '@/lib/gym-queries';
 import { useAuth } from '@/providers/auth-provider';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../utils/supabase';
 
 dayjs.extend(customParseFormat);
-
-// Define our session type now that we aren't relying on typeof MOCK_CLASSES
-type SessionType = {
-  id: string;
-  time: string;
-  title: string;
-  type: string;
-  clientId?: string;
-  checkedIn?: boolean;
-};
 
 type CheckInState = {
   status: 'loading' | 'success' | 'error';
@@ -42,6 +43,7 @@ type AttendanceRow = {
 export default function HomeScreen() {
   const theme = useTheme();
   const { signOut } = useAuth();
+  const queryClient = useQueryClient();
   const todayString = dayjs().format('YYYY-MM-DD');
   const [selectedDate, setSelectedDate] = useState(todayString);
 
@@ -50,26 +52,48 @@ export default function HomeScreen() {
   const editSnapPoints = useMemo(() => ['60%'], []);
   const rosterSnapPoints = useMemo(() => ['75%'], []);
 
-  // --- Roster State ---
-  const [rosterData, setRosterData] = useState<any[]>([]);
-  const [rosterLoading, setRosterLoading] = useState(false);
   const [rosterSearchQuery, setRosterSearchQuery] = useState('');
 
   // For adding walk-ins to the roster
   const [addWalkInQuery, setAddWalkInQuery] = useState('');
-  // --- Real Database State ---
-  const [classes, setClasses] = useState<SessionType[]>([]);
-  const [clients, setClients] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
   const [ptCheckInStates, setPtCheckInStates] = useState<Record<string, CheckInState>>({});
 
   const [editingSession, setEditingSession] = useState<SessionType | null>(null);
   const [selectedGroupClass, setSelectedGroupClass] = useState<SessionType | null>(null);
 
   const [clientQuery, setClientQuery] = useState('');
-  const [selectedClient, setSelectedClient] = useState<{ id: string, name: string } | null>(null);
+  const [selectedClient, setSelectedClient] = useState<ClientOption | null>(null);
   const [sessionTime, setSessionTime] = useState(new Date());
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const selectedGroupClassId = selectedGroupClass?.id ?? null;
+  const {
+    data: clientRecords = [],
+    error: clientsError,
+    refetch: refetchClients,
+  } = useQuery({
+    queryKey: gymQueryKeys.clients,
+    queryFn: fetchClients,
+  });
+  const clients = useMemo(() => clientRecords.map(toClientOption), [clientRecords]);
+  const {
+    data: classes = [],
+    error: classesError,
+    isLoading: loading,
+    refetch: refetchClasses,
+  } = useQuery({
+    queryKey: gymQueryKeys.classesByDate(selectedDate),
+    queryFn: () => fetchClassesByDate(selectedDate),
+  });
+  const {
+    data: rosterData = [],
+    error: rosterError,
+    isFetching: rosterLoading,
+    refetch: refetchRoster,
+  } = useQuery({
+    queryKey: gymQueryKeys.roster(selectedGroupClassId),
+    queryFn: () => fetchRoster(selectedGroupClassId!),
+    enabled: !!selectedGroupClassId,
+  });
 
   const renderBackdrop = useCallback(
     (props: any) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} pressBehavior="close" />, []
@@ -82,40 +106,36 @@ export default function HomeScreen() {
     keyboardBlurBehavior: 'restore' as const,
   }), []);
 
-  // --- Fetch Roster for a specific class ---
-  const fetchRoster = async (classId: string, options?: { clear?: boolean }) => {
-    if (options?.clear) setRosterData([]);
-    setRosterLoading(true);
-    const { data, error } = await supabase
-      .from('attendance')
-      .select(`
-        id,
-        client_id,
-        client_package_id,
-        clients ( id, first_name, last_name )
-      `)
-      .eq('class_id', classId);
+  const refreshScheduleState = useCallback(async (classId?: string | null) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: gymQueryKeys.classesByDate(selectedDate) }),
+      classId ? queryClient.invalidateQueries({ queryKey: gymQueryKeys.roster(classId) }) : Promise.resolve(),
+      queryClient.invalidateQueries({ queryKey: gymQueryKeys.clients }),
+    ]);
+  }, [queryClient, selectedDate]);
 
-    if (error) {
-      Alert.alert("Error fetching roster", error.message);
-    } else if (data) {
-      const formattedRoster = data.map(att => {
-        const clientData = att.clients as any;
-        return {
-          id: att.id.toString(), // The attendance record ID
-          clientId: att.client_id.toString(),
-          name: `${clientData.first_name} ${clientData.last_name}`,
-          // If they have a package ID linked to this attendance, they are checked in
-          checkedIn: !!att.client_package_id,
-        };
-      });
-      setRosterData(formattedRoster);
-    }
-    setRosterLoading(false);
-  };
+  useEffect(() => {
+    if (clientsError) Alert.alert('Error fetching clients', clientsError.message);
+  }, [clientsError]);
+
+  useEffect(() => {
+    if (classesError) Alert.alert('Error fetching schedule', classesError.message);
+  }, [classesError]);
+
+  useEffect(() => {
+    if (rosterError) Alert.alert('Error fetching roster', rosterError.message);
+  }, [rosterError]);
+
+  useFocusEffect(
+    useCallback(() => {
+      refetchClients();
+      refetchClasses();
+      if (selectedGroupClassId) refetchRoster();
+    }, [refetchClasses, refetchClients, refetchRoster, selectedGroupClassId])
+  );
 
   // --- Add Walk-in to Roster ---
-  const handleAddWalkIn = async (client: any) => {
+  const handleAddWalkIn = async (client: ClientOption) => {
     if (!selectedGroupClass) return;
 
     const { error } = await supabase.from('attendance').insert({
@@ -128,84 +148,9 @@ export default function HomeScreen() {
     } else {
       setAddWalkInQuery('');
       Keyboard.dismiss();
-      fetchRoster(selectedGroupClass.id); // Refresh the roster
+      refreshScheduleState(selectedGroupClass.id);
     }
   };
-
-  // --- 1. Fetch Clients for Autocomplete (Runs once) ---
-  useEffect(() => {
-    const fetchClients = async () => {
-      const { data, error } = await supabase
-        .from('clients')
-        .select('id, first_name, last_name')
-        .order('first_name');
-
-      if (!error && data) {
-        setClients(data.map(c => ({
-          id: c.id.toString(),
-          name: `${c.first_name} ${c.last_name}`.trim()
-        })));
-      }
-    };
-    fetchClients();
-  }, []);
-
-  // --- 2. Fetch Classes dynamically when selectedDate changes ---
-  const fetchClasses = useCallback(async () => {
-    setLoading(true);
-    const { error: templateError } = await supabase.rpc('generate_classes_from_templates', {
-      p_start_date: dayjs(selectedDate).subtract(14, 'day').format('YYYY-MM-DD'),
-      p_end_date: dayjs(selectedDate).add(14, 'day').format('YYYY-MM-DD'),
-    });
-
-    if (templateError) {
-      console.error('Template Schedule Error:', templateError.message);
-    }
-
-    const { data, error } = await supabase
-      .from('classes')
-      .select(`
-        id,
-        title,
-        class_type,
-        start_time,
-        attendance (
-          client_package_id,
-          client_id,
-          clients (id, first_name, last_name)
-        )
-      `)
-      .eq('scheduled_date', selectedDate)
-      .order('start_time', { ascending: true });
-
-    if (error) {
-      Alert.alert("Error fetching schedule", error.message);
-    } else if (data) {
-      const formatted = data.map(c => {
-        const isPT = c.class_type === 'Personal Training';
-        // Pluck the client data out of the attendance join
-        const firstAttendee = c.attendance?.[0]?.clients as any;
-
-        return {
-          id: c.id.toString(),
-          time: dayjs(`${selectedDate}T${c.start_time}`).format('h:mm A'),
-          title: isPT && firstAttendee ? `${firstAttendee.first_name} ${firstAttendee.last_name}` : c.title,
-          type: c.class_type,
-          clientId: firstAttendee?.id?.toString(),
-          checkedIn: !!c.attendance?.[0]?.client_package_id
-        };
-      });
-      setClasses(formatted);
-      setPtCheckInStates({});
-    }
-    setLoading(false);
-  }, [selectedDate]);
-
-  // Re-fetch whenever the calendar date is tapped
-  useEffect(() => {
-    const timeoutId = setTimeout(fetchClasses, 0);
-    return () => clearTimeout(timeoutId);
-  }, [fetchClasses]);
 
   const filteredClients = useMemo(() => {
     if (!clientQuery || selectedClient) return [];
@@ -217,6 +162,11 @@ export default function HomeScreen() {
     return rosterData.filter(c => c.name.toLowerCase().includes(rosterSearchQuery.toLowerCase()));
   }, [rosterSearchQuery, rosterData]);
 
+  const handleSelectedDateChange = (date: string) => {
+    setSelectedDate(date);
+    setPtCheckInStates({});
+  };
+
   // --- Action Handlers ---
   const handleCardPress = (session: SessionType) => {
     const isCheckedIn = session.checkedIn || ptCheckInStates[session.id]?.status === 'success';
@@ -225,7 +175,6 @@ export default function HomeScreen() {
       setSelectedGroupClass(session);
       setRosterSearchQuery('');
       setAddWalkInQuery('');
-      fetchRoster(session.id, { clear: true }); // <-- Fetch real data
       rosterSheetRef.current?.present();
     } else if (isCheckedIn) {
       handlePTUndoCheckIn(session);
@@ -252,7 +201,7 @@ export default function HomeScreen() {
             if (error) {
               Alert.alert('Undo Failed', 'Could not undo this check-in. Please try again.');
             } else if (success) {
-              fetchRoster(selectedGroupClass.id);
+              refreshScheduleState(selectedGroupClass.id);
             }
           },
         },
@@ -268,7 +217,7 @@ export default function HomeScreen() {
     if (error) {
       Alert.alert("Error", error.message);
     } else if (success) {
-      fetchRoster(selectedGroupClass.id); // Refresh to show the green "Checked In" status
+      refreshScheduleState(selectedGroupClass.id);
     } else {
       Alert.alert("Check-in Failed", "This client has no active packages with remaining classes.");
     }
@@ -293,11 +242,11 @@ export default function HomeScreen() {
         [session.id]: { status: 'error', message: 'Check-in error' },
       }));
     } else if (success) {
-      setClasses(prev => prev.map(item => item.id === session.id ? { ...item, checkedIn: true } : item));
       setPtCheckInStates(prev => ({
         ...prev,
         [session.id]: { status: 'success' },
       }));
+      refreshScheduleState(session.id);
     } else {
       setPtCheckInStates(prev => ({
         ...prev,
@@ -331,12 +280,12 @@ export default function HomeScreen() {
               [session.id]: { status: 'error', message: 'Undo failed' },
             }));
           } else if (success) {
-            setClasses(prev => prev.map(item => item.id === session.id ? { ...item, checkedIn: false } : item));
             setPtCheckInStates(prev => {
               const next = { ...prev };
               delete next[session.id];
               return next;
             });
+            refreshScheduleState(session.id);
           } else {
             setPtCheckInStates(prev => ({
               ...prev,
@@ -444,7 +393,7 @@ export default function HomeScreen() {
       }
     }
 
-    fetchClasses();
+    refreshScheduleState(editingSession?.id);
     closeEditSheet();
   };
 
@@ -462,7 +411,7 @@ export default function HomeScreen() {
 
           if (error || !success) Alert.alert("Cancel Failed", "Could not cancel this session. Please try again.");
           else {
-            fetchClasses();
+            refreshScheduleState(session.id);
             closeEditSheet();
           }
         }
@@ -562,7 +511,7 @@ export default function HomeScreen() {
           <ThemedText style={styles.headerTitle}>Gonza Boxing</ThemedText>
           <View style={styles.headerActions}>
             {selectedDate !== todayString && (
-              <TouchableOpacity style={[styles.todayButton, { backgroundColor: theme.surface }]} onPress={() => setSelectedDate(todayString)}>
+              <TouchableOpacity style={[styles.todayButton, { backgroundColor: theme.surface }]} onPress={() => handleSelectedDateChange(todayString)}>
                 <ThemedText type="smallBold">Today</ThemedText>
               </TouchableOpacity>
             )}
@@ -573,7 +522,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={[styles.calendarContainer, { backgroundColor: theme.background }]}>
-          <CalendarProvider date={selectedDate} onDateChanged={(date) => setSelectedDate(date)} style={{ backgroundColor: theme.background }}>
+          <CalendarProvider date={selectedDate} onDateChanged={handleSelectedDateChange} style={{ backgroundColor: theme.background }}>
             <WeekCalendar
               key={theme.background} firstDay={1} allowShadow={false}
               markedDates={{ [selectedDate]: { selected: true, selectedColor: theme.primary } }}

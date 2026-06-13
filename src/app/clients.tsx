@@ -12,28 +12,18 @@ import {
   PackageRow,
   SERVICE_TYPES,
   ServiceSummary,
-  sortClientPackages,
-  summarizePackagesByService,
 } from '../../utils/gym-logic';
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import dayjs from 'dayjs';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from 'expo-router';
 import { AppSymbol } from '@/components/app-symbol';
+import { ClientRecord, fetchClients, fetchPackages, gymQueryKeys } from '@/lib/gym-queries';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../utils/supabase';
-
-type ClientRecord = {
-  id: number;
-  first_name: string;
-  last_name: string;
-  phone: string | null;
-  name: string;
-  client_packages: ClientPackageRow[];
-  packageSummaries: ServiceSummary[];
-};
 
 const SERVICE_ORDER = [SERVICE_TYPES.GROUP, SERVICE_TYPES.PERSONAL_TRAINING];
 type ClientFilter = 'all' | 'attention';
@@ -50,14 +40,12 @@ const formatPhoneNumber = (value: string | null | undefined) => {
 
 export default function ClientsScreen() {
   const theme = useTheme();
+  const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ClientFilter>('all');
-  const [clients, setClients] = useState<ClientRecord[]>([]);
-  const [packages, setPackages] = useState<PackageRow[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
+  const [editingClientId, setEditingClientId] = useState<number | null>(null);
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null);
 
   const [fullName, setFullName] = useState('');
@@ -68,9 +56,30 @@ export default function ClientsScreen() {
   const [savingPackageActionId, setSavingPackageActionId] = useState<number | null>(null);
 
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
-  const hasLoadedRef = useRef(false);
-  const fetchingRef = useRef(false);
   const snapPoints = useMemo(() => ['85%'], []);
+  const {
+    data: clients = [],
+    error: clientsError,
+    isLoading: clientsLoading,
+    refetch: refetchClients,
+  } = useQuery({
+    queryKey: gymQueryKeys.clients,
+    queryFn: fetchClients,
+  });
+  const {
+    data: packages = [],
+    error: packagesError,
+    isLoading: packagesLoading,
+    refetch: refetchPackages,
+  } = useQuery({
+    queryKey: gymQueryKeys.packages,
+    queryFn: fetchPackages,
+  });
+  const loading = clientsLoading || packagesLoading;
+  const editingClient = useMemo(() => {
+    if (!editingClientId) return null;
+    return clients.find((client) => client.id === editingClientId) ?? null;
+  }, [clients, editingClientId]);
 
   const renderBackdrop = useCallback(
     (props: any) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} pressBehavior="close" />,
@@ -84,75 +93,19 @@ export default function ClientsScreen() {
     keyboardBlurBehavior: 'restore' as const,
   }), []);
 
-  const decorateClient = useCallback((client: any): ClientRecord => {
-    const ledger = sortClientPackages((client.client_packages || []) as ClientPackageRow[]);
-
-    return {
-      ...client,
-      name: `${client.first_name} ${client.last_name}`.trim(),
-      client_packages: ledger,
-      packageSummaries: SERVICE_ORDER.map((serviceType) => summarizePackagesByService(ledger, serviceType)),
-    };
-  }, []);
-
-  const fetchData = useCallback(async (focusedClientId?: number) => {
-    if (fetchingRef.current) return;
-    fetchingRef.current = true;
-    if (!hasLoadedRef.current) setLoading(true);
-
-    try {
-      const [clientsRes, packagesRes] = await Promise.all([
-        supabase
-          .from('clients')
-          .select(`
-            id, first_name, last_name, phone,
-            client_packages (
-              id, client_id, package_id, classes_remaining, start_date, expiration_date, payment_status,
-              packages ( id, name, price, total_classes, expires_in_weeks, service_type )
-            )
-          `)
-          .order('first_name', { ascending: true }),
-        supabase
-          .from('packages')
-          .select('id, name, price, total_classes, expires_in_weeks, service_type')
-          .order('service_type', { ascending: true })
-          .order('id', { ascending: true }),
-      ]);
-
-      if (packagesRes.error) {
-        console.error('Packages Fetch Error:', packagesRes.error);
-        Alert.alert('Packages Error', packagesRes.error.message);
-      } else if (packagesRes.data) {
-        const packageRows = packagesRes.data as PackageRow[];
-        setPackages(packageRows);
-        setSelectedPackageId((currentId) => {
-          if (currentId && packageRows.some((pkg) => pkg.id === currentId)) return currentId;
-          return packageRows[0]?.id ?? null;
-        });
-      }
-
-      if (clientsRes.error) {
-        console.error('Clients Fetch Error:', clientsRes.error);
-        Alert.alert('Clients Error', clientsRes.error.message);
-      } else if (clientsRes.data) {
-        const processedClients = clientsRes.data.map(decorateClient);
-        setClients(processedClients);
-
-        if (focusedClientId) {
-          const refreshedClient = processedClients.find((client) => client.id === focusedClientId) ?? null;
-          setEditingClient(refreshedClient);
-        }
-      }
-    } finally {
-      hasLoadedRef.current = true;
-      fetchingRef.current = false;
-      setLoading(false);
+  useEffect(() => {
+    if (clientsError) {
+      console.error('Clients Fetch Error:', clientsError);
+      Alert.alert('Clients Error', clientsError.message);
     }
-  }, [decorateClient]);
+  }, [clientsError]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (packagesError) {
+      console.error('Packages Fetch Error:', packagesError);
+      Alert.alert('Packages Error', packagesError.message);
+    }
+  }, [packagesError]);
 
   useEffect(() => {
     if (!phoneCopied) return;
@@ -163,8 +116,9 @@ export default function ClientsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (hasLoadedRef.current) fetchData();
-    }, [fetchData])
+      refetchClients();
+      refetchPackages();
+    }, [refetchClients, refetchPackages])
   );
 
   const getClientAttention = useCallback((client: ClientRecord) => {
@@ -213,7 +167,7 @@ export default function ClientsScreen() {
   }, [packages]);
 
   const selectedPackage = useMemo(() => {
-    return packages.find((pkg) => pkg.id === selectedPackageId) ?? null;
+    return packages.find((pkg) => pkg.id === selectedPackageId) ?? packages[0] ?? null;
   }, [packages, selectedPackageId]);
 
   const getVisiblePackageSummaries = (client: ClientRecord) => {
@@ -237,7 +191,7 @@ export default function ClientsScreen() {
   };
 
   const handleAddClient = () => {
-    setEditingClient(null);
+    setEditingClientId(null);
     setFullName('');
     setPhone('');
     setPhoneCopied(false);
@@ -249,7 +203,7 @@ export default function ClientsScreen() {
   };
 
   const handleClientPress = (client: ClientRecord) => {
-    setEditingClient(client);
+    setEditingClientId(client.id);
     setFullName(client.name);
     setPhone(formatPhoneNumber(client.phone));
     setPhoneCopied(false);
@@ -261,6 +215,10 @@ export default function ClientsScreen() {
   };
 
   const closeBottomSheet = () => bottomSheetModalRef.current?.dismiss();
+
+  const refreshClients = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: gymQueryKeys.clients });
+  }, [queryClient]);
 
   const handlePhoneChange = (value: string) => {
     setPhone(formatPhoneNumber(value));
@@ -292,7 +250,7 @@ export default function ClientsScreen() {
             const { error } = await supabase.from('client_packages').insert(buildClientPackageInsert(editingClient.id, packageToAdd));
 
             if (error) Alert.alert('Database Error', error.message);
-            else fetchData(editingClient.id);
+            else refreshClients();
           },
         },
       ]
@@ -319,7 +277,7 @@ export default function ClientsScreen() {
       return;
     }
 
-    fetchData(editingClient.id);
+    refreshClients();
   };
 
   const handleVoidPackage = (clientPackage: ClientPackageRow) => {
@@ -337,7 +295,7 @@ export default function ClientsScreen() {
             .eq('id', clientPackage.id);
 
           if (error) Alert.alert('Void Failed', 'Could not void this package. Please try again.');
-          else fetchData(editingClient.id);
+          else refreshClients();
         },
       },
     ]);
@@ -380,7 +338,7 @@ export default function ClientsScreen() {
     }
 
     handleCancelPackageAdjustment();
-    fetchData(editingClient.id);
+    refreshClients();
   };
 
   const handleSave = async () => {
@@ -399,7 +357,7 @@ export default function ClientsScreen() {
 
       if (error) Alert.alert('Error', error.message);
       else {
-        await fetchData(editingClient.id);
+        await refreshClients();
         closeBottomSheet();
       }
 
@@ -422,7 +380,7 @@ export default function ClientsScreen() {
 
     if (pkgErr) Alert.alert('Error', pkgErr.message);
     else {
-      await fetchData();
+      await refreshClients();
       closeBottomSheet();
     }
   };
@@ -703,7 +661,7 @@ export default function ClientsScreen() {
   };
 
   const renderPackageOption = (pkg: PackageRow) => {
-    const isSelected = selectedPackageId === pkg.id;
+    const isSelected = selectedPackage?.id === pkg.id;
 
     return (
       <TouchableOpacity
