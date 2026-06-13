@@ -18,7 +18,7 @@ import dayjs from 'dayjs';
 import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../utils/supabase';
 
@@ -33,7 +33,7 @@ type ClientRecord = {
 };
 
 const SERVICE_ORDER = [SERVICE_TYPES.GROUP, SERVICE_TYPES.PERSONAL_TRAINING];
-type ClientFilter = 'all' | 'attention' | 'unpaid' | 'noCredits';
+type ClientFilter = 'all' | 'attention';
 
 export default function ClientsScreen() {
   const theme = useTheme();
@@ -160,11 +160,9 @@ export default function ClientsScreen() {
         const attention = getClientAttention(client);
         acc.total += 1;
         if (!attention.active) acc.attention += 1;
-        if (attention.type === 'unpaid') acc.unpaid += 1;
-        if (attention.type === 'noCredits') acc.noCredits += 1;
         return acc;
       },
-      { total: 0, attention: 0, unpaid: 0, noCredits: 0 }
+      { total: 0, attention: 0 }
     );
   }, [clients, getClientAttention]);
 
@@ -177,8 +175,6 @@ export default function ClientsScreen() {
 
       if (!matchesSearch) return false;
       if (activeFilter === 'attention') return !attention.active;
-      if (activeFilter === 'unpaid') return attention.type === 'unpaid';
-      if (activeFilter === 'noCredits') return attention.type === 'noCredits';
 
       return true;
     });
@@ -649,17 +645,10 @@ export default function ClientsScreen() {
           />
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterScrollContainer}
-          contentContainerStyle={styles.filterScroll}
-        >
+        <View style={styles.filterBar}>
           {renderFilterChip('all', 'All', clientMetrics.total)}
-          {renderFilterChip('attention', 'Attention', clientMetrics.attention)}
-          {renderFilterChip('unpaid', 'Unpaid', clientMetrics.unpaid)}
-          {renderFilterChip('noCredits', 'No Credits', clientMetrics.noCredits)}
-        </ScrollView>
+          {renderFilterChip('attention', 'Needs Attention', clientMetrics.attention)}
+        </View>
 
         <FlatList
           data={loading ? [] : filteredClients}
@@ -810,8 +799,7 @@ const styles = StyleSheet.create({
   searchContainer: { flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.three, paddingHorizontal: Spacing.three, paddingVertical: 10, borderRadius: Spacing.two, marginBottom: Spacing.three },
   searchIcon: { marginRight: Spacing.two },
   searchInput: { flex: 1, fontSize: 15, fontWeight: '500', padding: 0 },
-  filterScrollContainer: { height: 46, flexGrow: 0, flexShrink: 0 },
-  filterScroll: { height: 34, paddingHorizontal: Spacing.three, gap: Spacing.two, alignItems: 'center' },
+  filterBar: { minHeight: 46, paddingHorizontal: Spacing.three, flexDirection: 'row', gap: Spacing.two, alignItems: 'center' },
   filterChip: { borderWidth: 1, height: 34, maxHeight: 34, borderRadius: 17, paddingLeft: 12, paddingRight: 6, flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 8 },
   filterChipText: { fontSize: 13, lineHeight: 16, fontWeight: '800' },
   filterCountPill: { minWidth: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
