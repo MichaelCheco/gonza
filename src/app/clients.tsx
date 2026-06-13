@@ -59,6 +59,13 @@ export default function ClientsScreen() {
     (props: any) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} pressBehavior="close" />,
     []
   );
+  const bottomSheetKeyboardProps = useMemo(() => ({
+    android_keyboardInputMode: 'adjustResize' as const,
+    enableBlurKeyboardOnGesture: true,
+    enableDynamicSizing: false,
+    keyboardBehavior: 'interactive' as const,
+    keyboardBlurBehavior: 'restore' as const,
+  }), []);
 
   const decorateClient = useCallback((client: any): ClientRecord => {
     const ledger = sortClientPackages((client.client_packages || []) as ClientPackageRow[]);
@@ -681,7 +688,7 @@ export default function ClientsScreen() {
         backdropComponent={renderBackdrop}
         backgroundStyle={{ backgroundColor: theme.backgroundElement }}
         handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}
-        keyboardBlurBehavior="restore"
+        {...bottomSheetKeyboardProps}
       >
         <BottomSheetScrollView
           style={styles.sheetScroll}

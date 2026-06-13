@@ -1,4 +1,4 @@
-import { BottomSheetBackdrop, BottomSheetFlatList, BottomSheetModal, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
+import { BottomSheetBackdrop, BottomSheetFlatList, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
@@ -77,6 +77,13 @@ export default function HomeScreen() {
   const renderBackdrop = useCallback(
     (props: any) => <BottomSheetBackdrop {...props} appearsOnIndex={0} disappearsOnIndex={-1} pressBehavior="close" />, []
   );
+  const bottomSheetKeyboardProps = useMemo(() => ({
+    android_keyboardInputMode: 'adjustResize' as const,
+    enableBlurKeyboardOnGesture: true,
+    enableDynamicSizing: false,
+    keyboardBehavior: 'interactive' as const,
+    keyboardBlurBehavior: 'restore' as const,
+  }), []);
 
   // --- Fetch Roster for a specific class ---
   const fetchRoster = async (classId: string) => {
@@ -630,8 +637,13 @@ export default function HomeScreen() {
       </SafeAreaView>
 
       {/* 1. Add / Edit Session Modal */}
-      <BottomSheetModal ref={editSheetRef} index={0} snapPoints={editSnapPoints} backdropComponent={renderBackdrop} backgroundStyle={{ backgroundColor: theme.backgroundElement }} handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}>
-        <BottomSheetView style={styles.sheetContent}>
+      <BottomSheetModal ref={editSheetRef} index={0} snapPoints={editSnapPoints} backdropComponent={renderBackdrop} backgroundStyle={{ backgroundColor: theme.backgroundElement }} handleIndicatorStyle={{ backgroundColor: theme.textSecondary }} {...bottomSheetKeyboardProps}>
+        <BottomSheetScrollView
+          style={styles.sheetScroll}
+          contentContainerStyle={styles.sheetScrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <ThemedText style={styles.sheetTitle}>{editingSession ? 'Edit Session' : 'Add Session'}</ThemedText>
 
           <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Session Type</ThemedText>
@@ -693,12 +705,12 @@ export default function HomeScreen() {
               <ThemedText style={styles.saveButtonText}>{editingSession ? 'Update' : 'Save'}</ThemedText>
             </TouchableOpacity>
           </View>
-        </BottomSheetView>
+        </BottomSheetScrollView>
       </BottomSheetModal>
 
       {/* 2. Group Class Roster Modal (Still Mocked) */}
       {/* 2. Group Class Roster Modal */}
-      <BottomSheetModal ref={rosterSheetRef} index={0} snapPoints={rosterSnapPoints} backdropComponent={renderBackdrop} backgroundStyle={{ backgroundColor: theme.backgroundElement }} handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}>
+      <BottomSheetModal ref={rosterSheetRef} index={0} snapPoints={rosterSnapPoints} backdropComponent={renderBackdrop} backgroundStyle={{ backgroundColor: theme.backgroundElement }} handleIndicatorStyle={{ backgroundColor: theme.textSecondary }} {...bottomSheetKeyboardProps}>
         <BottomSheetView style={styles.sheetContent}>
           <View style={styles.rosterHeader}>
             <ThemedText style={styles.sheetTitle}>{selectedGroupClass?.title}</ThemedText>
@@ -800,6 +812,8 @@ const styles = StyleSheet.create({
   fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
 
   sheetContent: { flex: 1, padding: Spacing.four, paddingTop: Spacing.two },
+  sheetScroll: { flex: 1 },
+  sheetScrollContent: { padding: Spacing.four, paddingTop: Spacing.two, paddingBottom: Spacing.six },
   sheetTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.three },
   inputLabel: { fontWeight: '600', marginBottom: 6, fontSize: 13 },
   input: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, fontSize: 15, marginBottom: Spacing.three },
