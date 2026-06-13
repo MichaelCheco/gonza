@@ -33,8 +33,6 @@ type CheckInState = {
   message?: string;
 };
 
-type SessionMode = 'Group' | 'Personal Training';
-
 type AttendanceRow = {
   id: number;
   client_id: number;
@@ -70,7 +68,6 @@ export default function HomeScreen() {
 
   const [clientQuery, setClientQuery] = useState('');
   const [selectedClient, setSelectedClient] = useState<{ id: string, name: string } | null>(null);
-  const [sessionMode, setSessionMode] = useState<SessionMode>('Group');
   const [sessionTime, setSessionTime] = useState(new Date());
   const [showTimePicker, setShowTimePicker] = useState(false);
 
@@ -86,7 +83,8 @@ export default function HomeScreen() {
   }), []);
 
   // --- Fetch Roster for a specific class ---
-  const fetchRoster = async (classId: string) => {
+  const fetchRoster = async (classId: string, options?: { clear?: boolean }) => {
+    if (options?.clear) setRosterData([]);
     setRosterLoading(true);
     const { data, error } = await supabase
       .from('attendance')
@@ -210,9 +208,9 @@ export default function HomeScreen() {
   }, [fetchClasses]);
 
   const filteredClients = useMemo(() => {
-    if (sessionMode !== 'Personal Training' || !clientQuery || selectedClient) return [];
+    if (!clientQuery || selectedClient) return [];
     return clients.filter(c => c.name.toLowerCase().includes(clientQuery.toLowerCase()));
-  }, [clientQuery, selectedClient, clients, sessionMode]);
+  }, [clientQuery, selectedClient, clients]);
 
   const filteredRoster = useMemo(() => {
     if (!rosterSearchQuery) return rosterData;
@@ -227,7 +225,7 @@ export default function HomeScreen() {
       setSelectedGroupClass(session);
       setRosterSearchQuery('');
       setAddWalkInQuery('');
-      fetchRoster(session.id); // <-- Fetch real data
+      fetchRoster(session.id, { clear: true }); // <-- Fetch real data
       rosterSheetRef.current?.present();
     } else if (isCheckedIn) {
       handlePTUndoCheckIn(session);
@@ -352,7 +350,6 @@ export default function HomeScreen() {
 
   const handleAddSession = () => {
     setEditingSession(null);
-    setSessionMode('Group');
     setClientQuery('');
     setSelectedClient(null);
     setSessionTime(new Date());
@@ -367,12 +364,12 @@ export default function HomeScreen() {
   };
 
   const handleLongPressEdit = (session: SessionType) => {
-    const nextMode: SessionMode = session.type === 'Personal Training' ? 'Personal Training' : 'Group';
+    if (session.type !== 'Personal Training') return;
+
     setEditingSession(session);
-    setSessionMode(nextMode);
     setClientQuery(session.title);
     const clientMatch = clients.find(c => c.id === session.clientId);
-    setSelectedClient(clientMatch && nextMode === 'Personal Training' ? clientMatch : null);
+    setSelectedClient(clientMatch ?? null);
     setSessionTime(dayjs(`${selectedDate} ${session.time}`, 'YYYY-MM-DD h:mm A').toDate());
     editSheetRef.current?.present();
   };
@@ -381,27 +378,24 @@ export default function HomeScreen() {
 
   // --- 3. Save to Supabase ---
   const handleSave = async () => {
-    const isPT = sessionMode === 'Personal Training';
-    const trimmedTitle = clientQuery.trim();
-
-    if (isPT && !selectedClient) {
+    if (!selectedClient) {
       return Alert.alert('Client Required', 'Please select a PT client.');
-    }
-
-    if (!isPT && !trimmedTitle) {
-      return Alert.alert('Title Required', 'Please enter a group class title.');
     }
 
     const timeString = dayjs(sessionTime).format('HH:mm:ss');
 
     const classData = {
-      title: isPT ? 'PT Session' : trimmedTitle,
-      class_type: sessionMode,
+      title: 'PT Session',
+      class_type: 'Personal Training',
       scheduled_date: selectedDate,
       start_time: timeString,
     };
 
     if (editingSession) {
+      if (editingSession.type !== 'Personal Training') {
+        return Alert.alert('PT Sessions Only', 'Group classes are managed from class templates.');
+      }
+
       const { data: attendanceRows, error: attendanceError } = await supabase
         .from('attendance')
         .select('id, client_id, client_package_id')
@@ -413,53 +407,38 @@ export default function HomeScreen() {
 
       const rows = (attendanceRows ?? []) as AttendanceRow[];
       const hasCheckedInAttendance = rows.some((row) => !!row.client_package_id);
-      const wasPT = editingSession.type === 'Personal Training';
       const existingPTClientId = rows[0]?.client_id?.toString();
 
-      if (hasCheckedInAttendance && wasPT !== isPT) {
-        return Alert.alert('Undo Check-Ins First', 'Undo existing check-ins before changing this session type.');
-      }
-
-      if (!wasPT && isPT && rows.length > 0) {
-        return Alert.alert('Roster Exists', 'Remove roster clients before converting this group class to PT.');
-      }
-
-      if (wasPT && isPT && hasCheckedInAttendance && existingPTClientId !== selectedClient?.id) {
+      if (hasCheckedInAttendance && existingPTClientId !== selectedClient.id) {
         return Alert.alert('Undo Check-In First', 'Undo the PT check-in before assigning this session to another client.');
       }
 
       const { error } = await supabase.from('classes').update(classData).eq('id', editingSession.id);
       if (error) return Alert.alert('Update Error', error.message);
 
-      if (isPT && selectedClient) {
-        if (rows[0]) {
-          const { error: attendanceUpdateError } = await supabase
-            .from('attendance')
-            .update({ client_id: selectedClient.id })
-            .eq('id', rows[0].id);
+      if (rows[0]) {
+        const { error: attendanceUpdateError } = await supabase
+          .from('attendance')
+          .update({ client_id: selectedClient.id })
+          .eq('id', rows[0].id);
 
-          if (attendanceUpdateError) return Alert.alert('Attendance Error', 'Could not update the PT client.');
-        } else {
-          const { error: attendanceInsertError } = await supabase.from('attendance').insert({
-            class_id: editingSession.id,
-            client_id: selectedClient.id,
-          });
+        if (attendanceUpdateError) return Alert.alert('Attendance Error', 'Could not update the PT client.');
+      } else {
+        const { error: attendanceInsertError } = await supabase.from('attendance').insert({
+          class_id: editingSession.id,
+          client_id: selectedClient.id,
+        });
 
-          if (attendanceInsertError) return Alert.alert('Attendance Error', 'Could not assign the PT client.');
-        }
-      } else if (wasPT && !isPT) {
-        const { error: attendanceDeleteError } = await supabase.from('attendance').delete().eq('class_id', editingSession.id);
-
-        if (attendanceDeleteError) return Alert.alert('Attendance Error', 'Could not clear the old PT client.');
+        if (attendanceInsertError) return Alert.alert('Attendance Error', 'Could not assign the PT client.');
       }
     } else {
       const { data: newClass, error: classErr } = await supabase.from('classes').insert(classData).select().single();
       if (classErr) return Alert.alert("Insert Error", classErr.message);
 
-      if (isPT && newClass) {
+      if (newClass) {
         const { error: attendanceErr } = await supabase.from('attendance').insert({
           class_id: newClass.id,
-          client_id: selectedClient!.id,
+          client_id: selectedClient.id,
         });
         if (attendanceErr) Alert.alert("Attendance Error", attendanceErr.message);
       }
@@ -524,7 +503,7 @@ export default function HomeScreen() {
     return (
       <View style={styles.classCardWrapper}>
         <Swipeable renderLeftActions={() => renderLeftActions(item)} renderRightActions={() => renderRightActions(item)} friction={2}>
-          <TouchableOpacity activeOpacity={0.8} onPress={() => handleCardPress(item)} onLongPress={() => handleLongPressEdit(item)}>
+          <TouchableOpacity activeOpacity={0.8} onPress={() => handleCardPress(item)} onLongPress={isPT ? () => handleLongPressEdit(item) : undefined}>
             <ThemedView type="surface" style={styles.classCard}>
               <View style={[styles.timeContainer, { borderRightColor: theme.textSecondary }]}>
                 <ThemedText style={styles.timeText}>{item.time}</ThemedText>
@@ -624,7 +603,7 @@ export default function HomeScreen() {
               ) : (
                 <TouchableOpacity activeOpacity={0.7} onPress={handleAddSession} style={styles.emptyState}>
                   <SymbolView name="calendar.badge.plus" size={40} tintColor={theme.textSecondary} style={{ marginBottom: Spacing.two }} />
-                  <ThemedText themeColor="textSecondary" style={styles.emptyText}>No sessions scheduled.{"\n"}Tap to add one.</ThemedText>
+                  <ThemedText themeColor="textSecondary" style={styles.emptyText}>No sessions scheduled.{"\n"}Tap to add a PT session.</ThemedText>
                 </TouchableOpacity>
               )
             }
@@ -636,7 +615,7 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </SafeAreaView>
 
-      {/* 1. Add / Edit Session Modal */}
+      {/* 1. Add / Edit PT Session Modal */}
       <BottomSheetModal ref={editSheetRef} index={0} snapPoints={editSnapPoints} backdropComponent={renderBackdrop} backgroundStyle={{ backgroundColor: theme.backgroundElement }} handleIndicatorStyle={{ backgroundColor: theme.textSecondary }} {...bottomSheetKeyboardProps}>
         <BottomSheetScrollView
           style={styles.sheetScroll}
@@ -644,38 +623,12 @@ export default function HomeScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <ThemedText style={styles.sheetTitle}>{editingSession ? 'Edit Session' : 'Add Session'}</ThemedText>
+          <ThemedText style={styles.sheetTitle}>{editingSession ? 'Edit PT Session' : 'Add PT Session'}</ThemedText>
 
-          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Session Type</ThemedText>
-          <View style={[styles.modeSelector, { backgroundColor: theme.background }]}>
-            {(['Group', 'Personal Training'] as SessionMode[]).map((mode) => {
-              const isSelected = sessionMode === mode;
-
-              return (
-                <TouchableOpacity
-                  key={mode}
-                  style={[styles.modeOption, { backgroundColor: isSelected ? theme.controlSelected : 'transparent' }]}
-                  onPress={() => {
-                    setSessionMode(mode);
-                    setSelectedClient(null);
-                    setClientQuery('');
-                  }}
-                  activeOpacity={0.8}
-                >
-                  <ThemedText style={[styles.modeOptionText, { color: isSelected ? theme.onControlSelected : theme.textSecondary }]}>
-                    {mode === 'Personal Training' ? 'PT' : 'Group'}
-                  </ThemedText>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>
-            {sessionMode === 'Personal Training' ? 'Client' : 'Group Title'}
-          </ThemedText>
+          <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Client</ThemedText>
           <BottomSheetTextInput
             style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
-            placeholder={sessionMode === 'Personal Training' ? 'Search clients' : 'Class title'} placeholderTextColor={theme.textSecondary}
+            placeholder="Search clients" placeholderTextColor={theme.textSecondary}
             value={clientQuery} onChangeText={(text) => { setClientQuery(text); setSelectedClient(null); }}
           />
 
@@ -702,7 +655,7 @@ export default function HomeScreen() {
 
           <View style={[styles.actionRow, { marginTop: showTimePicker ? Spacing.two : Spacing.four }]}>
             <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary, flex: 1 }]} onPress={handleSave}>
-              <ThemedText style={[styles.saveButtonText, { color: theme.onPrimary }]}>{editingSession ? 'Update' : 'Save'}</ThemedText>
+              <ThemedText style={[styles.saveButtonText, { color: theme.onPrimary }]}>{editingSession ? 'Update PT' : 'Add PT'}</ThemedText>
             </TouchableOpacity>
           </View>
         </BottomSheetScrollView>
@@ -743,14 +696,28 @@ export default function HomeScreen() {
 
           <View style={[styles.divider, { backgroundColor: theme.surface, marginVertical: Spacing.three }]} />
 
-          {rosterLoading ? (
-            <ActivityIndicator size="small" color={theme.primary} style={{ marginTop: 20 }} />
-          ) : (
+          <View style={styles.rosterListFrame}>
             <BottomSheetFlatList
-              data={filteredRoster}
+              data={rosterLoading && rosterData.length === 0 ? [] : filteredRoster}
               keyExtractor={item => item.id}
               contentContainerStyle={{ paddingBottom: Spacing.six }}
-              ListEmptyComponent={<ThemedText themeColor="textSecondary" style={{ textAlign: 'center', marginTop: Spacing.four }}>Roster is empty.</ThemedText>}
+              ListEmptyComponent={
+                rosterLoading ? (
+                  <View style={styles.rosterSkeletonList}>
+                    {[0, 1, 2].map((item) => (
+                      <View key={item} style={[styles.rosterSkeletonRow, { borderBottomColor: theme.surface }]}>
+                        <View style={styles.rosterSkeletonTextColumn}>
+                          <View style={[styles.rosterSkeletonName, { backgroundColor: theme.backgroundElement }]} />
+                          <View style={[styles.rosterSkeletonMeta, { backgroundColor: theme.backgroundElement }]} />
+                        </View>
+                        <View style={[styles.rosterSkeletonButton, { backgroundColor: theme.surface }]} />
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <ThemedText themeColor="textSecondary" style={styles.rosterEmptyText}>Roster is empty.</ThemedText>
+                )
+              }
               renderItem={({ item }) => (
                 <View style={[styles.rosterRow, { borderBottomColor: theme.surface }]}>
                   <View>
@@ -769,7 +736,12 @@ export default function HomeScreen() {
                 </View>
               )}
             />
-          )}
+            {rosterLoading && rosterData.length > 0 && (
+              <View style={[styles.rosterRefreshBadge, { backgroundColor: theme.backgroundElement, borderColor: theme.surface }]}>
+                <ActivityIndicator size="small" color={theme.primary} />
+              </View>
+            )}
+          </View>
         </BottomSheetView>
       </BottomSheetModal>
 
@@ -817,10 +789,6 @@ const styles = StyleSheet.create({
   sheetTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.three },
   inputLabel: { fontWeight: '600', marginBottom: 6, fontSize: 13 },
   input: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, fontSize: 15, marginBottom: Spacing.three },
-  modeSelector: { flexDirection: 'row', borderRadius: 8, padding: 3, marginBottom: Spacing.three },
-  modeOption: { flex: 1, minHeight: 34, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
-  modeOptionText: { fontSize: 13, fontWeight: '800' },
-
   autocompleteContainer: { maxHeight: 150, borderWidth: 1, borderRadius: Spacing.two, marginTop: -8, marginBottom: Spacing.three, overflow: 'hidden' },
   autocompleteItem: { padding: 12, borderBottomWidth: 1 },
   timeSelectorButton: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, marginBottom: Spacing.three, justifyContent: 'center' },
@@ -829,8 +797,17 @@ const styles = StyleSheet.create({
   saveButtonText: { fontWeight: '700', fontSize: 16 },
 
   rosterHeader: { marginBottom: Spacing.three },
+  rosterListFrame: { flex: 1, minHeight: 240 },
   rosterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1 },
   rosterName: { fontSize: 16, fontWeight: '600', marginBottom: 2 },
   rosterCheckInBtn: { minWidth: 82, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: Spacing.three, paddingVertical: 8, borderRadius: Spacing.two },
   rosterCheckInText: { fontWeight: '700', fontSize: 13 },
+  rosterEmptyText: { textAlign: 'center', marginTop: Spacing.four },
+  rosterRefreshBadge: { position: 'absolute', top: 8, right: 0, width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  rosterSkeletonList: { paddingBottom: Spacing.six },
+  rosterSkeletonRow: { minHeight: 61, paddingVertical: 12, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  rosterSkeletonTextColumn: { flex: 1, gap: 7 },
+  rosterSkeletonName: { width: '44%', height: 16, borderRadius: 4 },
+  rosterSkeletonMeta: { width: '26%', height: 11, borderRadius: 4 },
+  rosterSkeletonButton: { width: 82, height: 34, borderRadius: Spacing.two },
 });
