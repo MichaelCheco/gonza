@@ -15,7 +15,14 @@ export const Colors = {
     backgroundSelected: '#E0E1E6',
     textSecondary: '#60646C',
     primary: '#ED2024',     // Gonza Red
+    onPrimary: '#FFFFFF',
+    success: '#1F8A3B',
+    onSuccess: '#FFFFFF',
+    warning: '#B86A00',
     surface: '#F4F4F4',     // Light card background
+    control: '#F0F0F3',
+    controlSelected: '#ED2024',
+    onControlSelected: '#FFFFFF',
   },
   dark: {
     text: '#ffffff',
@@ -24,7 +31,14 @@ export const Colors = {
     backgroundSelected: '#2E3135',
     textSecondary: '#B0B4BA',
     primary: '#ED2024',     // Gonza Red
+    onPrimary: '#FFFFFF',
+    success: '#57D27A',
+    onSuccess: '#07140B',
+    warning: '#F0B85A',
     surface: '#1A1A1A',     // Dark card background
+    control: '#212225',
+    controlSelected: '#ED2024',
+    onControlSelected: '#FFFFFF',
   },
 } as const;
 

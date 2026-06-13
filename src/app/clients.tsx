@@ -375,7 +375,7 @@ export default function ClientsScreen() {
     if (isUnpaid) {
       return {
         background: theme.background,
-        border: '#D97706',
+        border: theme.warning,
         text: theme.text,
         muted: theme.textSecondary,
         icon: 'dollarsign.circle.fill' as const,
@@ -448,7 +448,7 @@ export default function ClientsScreen() {
           <ThemedText themeColor="textSecondary" style={styles.historyMeta}>
             {clientPackage.classes_remaining} left • {expirationText}
           </ThemedText>
-          <ThemedText style={[styles.historyStatus, { color: isVoided ? theme.textSecondary : status.active ? '#28A745' : theme.primary }]}>
+          <ThemedText style={[styles.historyStatus, { color: isVoided ? theme.textSecondary : status.active ? theme.success : theme.primary }]}>
             {status.reason}
           </ThemedText>
         </View>
@@ -474,16 +474,16 @@ export default function ClientsScreen() {
             style={[
               styles.markPaidButton,
               {
-                backgroundColor: isUnpaid ? '#28A745' : theme.backgroundElement,
-                borderColor: isUnpaid ? '#28A745' : theme.surface,
+                backgroundColor: isUnpaid ? theme.success : theme.control,
+                borderColor: isUnpaid ? theme.success : theme.surface,
               },
             ]}
             onPress={() => handleMarkPaid(clientPackage.id)}
             disabled={!isUnpaid || isVoided}
             activeOpacity={isUnpaid ? 0.8 : 1}
           >
-            <SymbolView name="dollarsign.circle.fill" size={15} tintColor={isUnpaid ? '#FFFFFF' : theme.textSecondary} />
-            <ThemedText style={[styles.markPaidText, { color: isUnpaid ? '#FFFFFF' : theme.textSecondary }]}>
+            <SymbolView name="dollarsign.circle.fill" size={15} tintColor={isUnpaid ? theme.onSuccess : theme.textSecondary} />
+            <ThemedText style={[styles.markPaidText, { color: isUnpaid ? theme.onSuccess : theme.textSecondary }]}>
               {isUnpaid ? 'Mark Paid' : isVoided ? 'Voided' : 'Paid'}
             </ThemedText>
           </TouchableOpacity>
@@ -512,18 +512,18 @@ export default function ClientsScreen() {
         style={[
           styles.filterChip,
           {
-            backgroundColor: isSelected ? theme.text : theme.backgroundElement,
-            borderColor: isSelected ? theme.text : theme.backgroundSelected,
+            backgroundColor: isSelected ? theme.controlSelected : theme.control,
+            borderColor: isSelected ? theme.controlSelected : theme.backgroundSelected,
           },
         ]}
         onPress={() => setActiveFilter(filter)}
         activeOpacity={0.8}
       >
-        <ThemedText style={[styles.filterChipText, { color: isSelected ? theme.background : theme.text }]}>
+        <ThemedText style={[styles.filterChipText, { color: isSelected ? theme.onControlSelected : theme.text }]}>
           {label}
         </ThemedText>
-        <View style={[styles.filterCountPill, { backgroundColor: isSelected ? theme.background : theme.background }]}>
-          <ThemedText style={[styles.filterCountText, { color: isSelected ? theme.text : theme.textSecondary }]}>
+        <View style={[styles.filterCountPill, { backgroundColor: isSelected ? theme.onControlSelected : theme.background }]}>
+          <ThemedText style={[styles.filterCountText, { color: isSelected ? theme.controlSelected : theme.textSecondary }]}>
             {count}
           </ThemedText>
         </View>
@@ -541,7 +541,7 @@ export default function ClientsScreen() {
           styles.packageOption,
           {
             backgroundColor: isSelected ? theme.backgroundSelected : theme.background,
-            borderColor: isSelected ? theme.text : theme.surface,
+            borderColor: isSelected ? theme.controlSelected : theme.surface,
           },
         ]}
         onPress={() => setSelectedPackageId(pkg.id)}
@@ -556,15 +556,15 @@ export default function ClientsScreen() {
 
         {editingClient ? (
           <TouchableOpacity
-            style={[styles.inlineAddButton, { backgroundColor: theme.text }]}
+            style={[styles.inlineAddButton, { backgroundColor: theme.controlSelected }]}
             onPress={() => handleAddPackage(pkg)}
             activeOpacity={0.8}
           >
-            <SymbolView name="plus" size={14} tintColor={theme.background} weight="bold" />
+            <SymbolView name="plus" size={14} tintColor={theme.onControlSelected} weight="bold" />
           </TouchableOpacity>
         ) : (
-          <View style={[styles.radioMark, { borderColor: isSelected ? theme.text : theme.textSecondary }]}>
-            {isSelected && <View style={[styles.radioMarkInner, { backgroundColor: theme.text }]} />}
+          <View style={[styles.radioMark, { borderColor: isSelected ? theme.controlSelected : theme.textSecondary }]}>
+            {isSelected && <View style={[styles.radioMarkInner, { backgroundColor: theme.controlSelected }]} />}
           </View>
         )}
       </TouchableOpacity>
@@ -677,7 +677,7 @@ export default function ClientsScreen() {
         />
 
         <TouchableOpacity style={[styles.fab, { backgroundColor: theme.primary }]} activeOpacity={0.8} onPress={handleAddClient}>
-          <SymbolView name="person.badge.plus.fill" size={22} tintColor="#FFFFFF" />
+          <SymbolView name="person.badge.plus" size={22} tintColor={theme.onPrimary} />
         </TouchableOpacity>
       </SafeAreaView>
 
@@ -702,7 +702,7 @@ export default function ClientsScreen() {
               <View style={[styles.sheetSummary, { backgroundColor: theme.background, borderColor: theme.surface }]}>
                 <View style={styles.sheetSummaryHeader}>
                   <View style={styles.sheetSummaryAvatar}>
-                    <ThemedText style={styles.sheetSummaryInitials}>
+                    <ThemedText style={[styles.sheetSummaryInitials, { color: theme.onPrimary }]}>
                       {editingClient.name
                         .split(' ')
                         .filter(Boolean)
@@ -792,7 +792,7 @@ export default function ClientsScreen() {
             )}
 
             <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary }]} onPress={handleSave} activeOpacity={0.8}>
-              <ThemedText style={styles.saveButtonText}>{editingClient ? 'Save Details' : 'Create Client'}</ThemedText>
+              <ThemedText style={[styles.saveButtonText, { color: theme.onPrimary }]}>{editingClient ? 'Save Details' : 'Create Client'}</ThemedText>
             </TouchableOpacity>
         </BottomSheetScrollView>
       </BottomSheetModal>
@@ -856,7 +856,7 @@ const styles = StyleSheet.create({
   sheetSummary: { borderWidth: 1, borderRadius: 8, padding: 14, gap: Spacing.two, marginBottom: Spacing.three },
   sheetSummaryHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   sheetSummaryAvatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#ED2024', justifyContent: 'center', alignItems: 'center' },
-  sheetSummaryInitials: { color: '#FFFFFF', fontSize: 14, fontWeight: '900' },
+  sheetSummaryInitials: { fontSize: 14, fontWeight: '900' },
   sheetSummaryText: { flex: 1 },
   sheetSummaryName: { fontSize: 17, fontWeight: '900' },
   sheetSummaryMeta: { fontSize: 13, fontWeight: '700' },
@@ -902,5 +902,5 @@ const styles = StyleSheet.create({
   emptyHistoryText: { textAlign: 'center', paddingVertical: Spacing.three, fontWeight: '600' },
 
   saveButton: { paddingVertical: 13, borderRadius: Spacing.two, alignItems: 'center', marginTop: Spacing.two },
-  saveButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
+  saveButtonText: { fontWeight: '800', fontSize: 15 },
 });

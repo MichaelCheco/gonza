@@ -499,18 +499,18 @@ export default function HomeScreen() {
 
     return (
       <TouchableOpacity
-        style={[styles.swipeAction, { backgroundColor: '#28A745', marginRight: Spacing.two }]}
+        style={[styles.swipeAction, { backgroundColor: theme.success, marginRight: Spacing.two }]}
         onPress={() => handlePTCheckIn(item)}
         activeOpacity={0.8}
       >
-        <SymbolView name="checkmark.circle.fill" size={22} tintColor="#FFFFFF" />
+        <SymbolView name="checkmark.circle.fill" size={22} tintColor={theme.onSuccess} />
       </TouchableOpacity>
     );
   };
 
   const renderRightActions = (item: SessionType) => (
     <TouchableOpacity style={[styles.swipeAction, { backgroundColor: theme.primary, marginLeft: Spacing.two }]} onPress={() => handleDelete(item)} activeOpacity={0.8}>
-      <SymbolView name="trash.fill" size={20} tintColor="#FFFFFF" />
+      <SymbolView name="trash.fill" size={20} tintColor={theme.onPrimary} />
     </TouchableOpacity>
   );
 
@@ -601,7 +601,7 @@ export default function HomeScreen() {
               style={{ backgroundColor: theme.background }}
               theme={{
                 calendarBackground: theme.background, backgroundColor: theme.background, selectedDayBackgroundColor: theme.primary,
-                selectedDayTextColor: '#FFFFFF', todayTextColor: theme.primary, dayTextColor: theme.text,
+                selectedDayTextColor: theme.onPrimary, todayTextColor: theme.primary, dayTextColor: theme.text,
                 textDisabledColor: theme.backgroundElement, monthTextColor: theme.text, textSectionTitleColor: theme.textSecondary,
               }}
             />
@@ -632,7 +632,7 @@ export default function HomeScreen() {
         </View>
 
         <TouchableOpacity style={[styles.fab, { backgroundColor: theme.primary }]} activeOpacity={0.8} onPress={handleAddSession}>
-          <SymbolView name="plus" size={24} tintColor="#FFFFFF" weight="bold" />
+          <SymbolView name="plus" size={24} tintColor={theme.onPrimary} weight="bold" />
         </TouchableOpacity>
       </SafeAreaView>
 
@@ -654,7 +654,7 @@ export default function HomeScreen() {
               return (
                 <TouchableOpacity
                   key={mode}
-                  style={[styles.modeOption, { backgroundColor: isSelected ? theme.text : 'transparent' }]}
+                  style={[styles.modeOption, { backgroundColor: isSelected ? theme.controlSelected : 'transparent' }]}
                   onPress={() => {
                     setSessionMode(mode);
                     setSelectedClient(null);
@@ -662,7 +662,7 @@ export default function HomeScreen() {
                   }}
                   activeOpacity={0.8}
                 >
-                  <ThemedText style={[styles.modeOptionText, { color: isSelected ? theme.background : theme.textSecondary }]}>
+                  <ThemedText style={[styles.modeOptionText, { color: isSelected ? theme.onControlSelected : theme.textSecondary }]}>
                     {mode === 'Personal Training' ? 'PT' : 'Group'}
                   </ThemedText>
                 </TouchableOpacity>
@@ -702,7 +702,7 @@ export default function HomeScreen() {
 
           <View style={[styles.actionRow, { marginTop: showTimePicker ? Spacing.two : Spacing.four }]}>
             <TouchableOpacity style={[styles.saveButton, { backgroundColor: theme.primary, flex: 1 }]} onPress={handleSave}>
-              <ThemedText style={styles.saveButtonText}>{editingSession ? 'Update' : 'Save'}</ThemedText>
+              <ThemedText style={[styles.saveButtonText, { color: theme.onPrimary }]}>{editingSession ? 'Update' : 'Save'}</ThemedText>
             </TouchableOpacity>
           </View>
         </BottomSheetScrollView>
@@ -826,7 +826,7 @@ const styles = StyleSheet.create({
   timeSelectorButton: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, marginBottom: Spacing.three, justifyContent: 'center' },
   actionRow: { flexDirection: 'row', gap: Spacing.two },
   saveButton: { paddingVertical: 14, borderRadius: Spacing.two, alignItems: 'center' },
-  saveButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+  saveButtonText: { fontWeight: '700', fontSize: 16 },
 
   rosterHeader: { marginBottom: Spacing.three },
   rosterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1 },

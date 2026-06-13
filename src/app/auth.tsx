@@ -61,7 +61,7 @@ export default function AuthScreen() {
                             disabled={loading}
                             onPress={signInWithEmail}
                         >
-                            <ThemedText style={styles.buttonText}>Sign In</ThemedText>
+                            <ThemedText style={[styles.buttonText, { color: theme.onPrimary }]}>Sign In</ThemedText>
                         </TouchableOpacity>
 
                         <ThemedText themeColor="textSecondary" style={styles.ownerOnlyText}>
@@ -85,6 +85,6 @@ const styles = StyleSheet.create({
     input: { borderWidth: 1, borderRadius: Spacing.two, padding: 14, fontSize: 15 },
     buttonContainer: { marginTop: Spacing.four, gap: Spacing.three },
     button: { paddingVertical: 14, borderRadius: Spacing.two, alignItems: 'center' },
-    buttonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+    buttonText: { fontWeight: '700', fontSize: 16 },
     ownerOnlyText: { fontSize: 12, lineHeight: 17, textAlign: 'center' },
 });
