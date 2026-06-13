@@ -26,7 +26,7 @@ import {
 } from '@/lib/gym-queries';
 import { useAuth } from '@/providers/auth-provider';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '../../utils/supabase';
+import { supabase } from '@/utils/supabase';
 
 dayjs.extend(customParseFormat);
 

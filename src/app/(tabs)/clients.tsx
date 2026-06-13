@@ -12,7 +12,7 @@ import {
   PackageRow,
   SERVICE_TYPES,
   ServiceSummary,
-} from '../../utils/gym-logic';
+} from '@/utils/gym-logic';
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import dayjs from 'dayjs';
 import * as Clipboard from 'expo-clipboard';
@@ -23,7 +23,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { supabase } from '../../utils/supabase';
+import { supabase } from '@/utils/supabase';
 
 const SERVICE_ORDER = [SERVICE_TYPES.GROUP, SERVICE_TYPES.PERSONAL_TRAINING];
 type ClientFilter = 'all' | 'attention';
