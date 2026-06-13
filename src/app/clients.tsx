@@ -397,24 +397,88 @@ export default function ClientsScreen() {
     };
   };
 
-  const renderServiceTile = (summary: ServiceSummary, compact = false) => {
-    const hasPackage = summary.totalCount > 0;
-    const palette = getStatusPalette(summary);
-    const shouldShowZero = compact && hasPackage && summary.usableClasses === 0 && summary.unpaidCount === 0;
-    const value = hasPackage ? (summary.usableClasses > 0 ? `${summary.usableClasses}` : shouldShowZero ? '0' : summary.reason) : 'None';
-    const caption = hasPackage && (summary.usableClasses > 0 || shouldShowZero) ? 'left' : summary.label;
+  const getAttentionBadge = (attention: ReturnType<typeof getClientAttention>) => {
+    if (attention.active) return null;
+
+    if (attention.type === 'unpaid') {
+      return {
+        label: 'Unpaid',
+        icon: 'dollarsign.circle.fill' as const,
+        color: theme.warning,
+      };
+    }
+
+    return {
+      label: attention.reason === 'No packages' ? 'No packages' : 'No credits',
+      icon: 'exclamationmark.triangle.fill' as const,
+      color: theme.primary,
+    };
+  };
+
+  const getServiceStatusLabel = (summary: ServiceSummary) => {
+    if (summary.unpaidCount > 0) return `${summary.label} unpaid`;
+    if (summary.totalCount === 0) return `${summary.label} -`;
+    if (summary.usableClasses > 0) return `${summary.label} ${summary.usableClasses}`;
+    return `${summary.label} 0`;
+  };
+
+  const getServiceStatusPalette = (summary: ServiceSummary) => {
+    if (summary.unpaidCount > 0) {
+      return {
+        background: theme.backgroundElement,
+        border: theme.warning,
+        text: theme.warning,
+      };
+    }
+
+    if (summary.totalCount > 0 && summary.usableClasses === 0) {
+      return {
+        background: theme.backgroundElement,
+        border: theme.primary,
+        text: theme.primary,
+      };
+    }
+
+    return {
+      background: theme.backgroundElement,
+      border: theme.backgroundSelected,
+      text: summary.totalCount > 0 ? theme.text : theme.textSecondary,
+    };
+  };
+
+  const renderServiceStatusPill = (summary: ServiceSummary) => {
+    const palette = getServiceStatusPalette(summary);
 
     return (
-      <View key={summary.serviceType} style={[styles.serviceTile, compact && styles.serviceTileCompact]}>
+      <View
+        key={summary.serviceType}
+        style={[
+          styles.serviceStatusPill,
+          { backgroundColor: palette.background, borderColor: palette.border },
+        ]}
+      >
+        <ThemedText numberOfLines={1} style={[styles.serviceStatusPillText, { color: palette.text }]}>
+          {getServiceStatusLabel(summary)}
+        </ThemedText>
+      </View>
+    );
+  };
+
+  const renderServiceTile = (summary: ServiceSummary) => {
+    const hasPackage = summary.totalCount > 0;
+    const palette = getStatusPalette(summary);
+    const value = hasPackage ? (summary.usableClasses > 0 ? `${summary.usableClasses}` : summary.reason) : 'None';
+    const caption = hasPackage && summary.usableClasses > 0 ? 'left' : summary.label;
+
+    return (
+      <View key={summary.serviceType} style={styles.serviceTile}>
         <View style={[styles.serviceTileAccent, { backgroundColor: palette.border }]} />
-        <View style={[styles.serviceTileHeader, compact && styles.serviceTileHeaderCompact]}>
+        <View style={styles.serviceTileHeader}>
           <ThemedText style={[styles.serviceTileLabel, { color: palette.text }]}>{summary.label}</ThemedText>
           {summary.needsAttention && palette.icon && <SymbolView name={palette.icon} size={13} tintColor={palette.border} />}
         </View>
-        <View style={[styles.serviceTileValueRow, compact && styles.serviceTileValueRowCompact]}>
-          <ThemedText style={[compact ? styles.serviceTileValueCompact : styles.serviceTileValue, { color: palette.text }]}>
-            {value}
-          </ThemedText>
+        <View style={styles.serviceTileValueRow}>
+          <ThemedText style={[styles.serviceTileValue, { color: palette.text }]}>{value}</ThemedText>
           <ThemedText style={[styles.serviceTileCaption, { color: palette.muted }]}>{caption}</ThemedText>
         </View>
       </View>
@@ -569,29 +633,32 @@ export default function ClientsScreen() {
 
   const renderClientCard = ({ item }: { item: ClientRecord }) => {
     const attention = getClientAttention(item);
-    const attentionLabel = attention.type === 'noCredits' ? 'No credits' : attention.reason;
-    const visibleSummaries = getVisiblePackageSummaries(item);
+    const attentionBadge = getAttentionBadge(attention);
 
     return (
       <TouchableOpacity activeOpacity={0.8} onPress={() => handleClientPress(item)}>
         <ThemedView type="surface" style={styles.clientCard}>
           <View style={styles.clientCardHeader}>
             <View style={styles.clientIdentity}>
-              <ThemedText style={styles.clientName}>{item.name}</ThemedText>
-              <ThemedText themeColor="textSecondary" style={styles.clientPhone}>{item.phone || 'No phone added'}</ThemedText>
+              <ThemedText numberOfLines={1} style={styles.clientName}>{item.name}</ThemedText>
             </View>
-            {!attention.active && (
-              <View style={[styles.attentionPill, { backgroundColor: theme.backgroundElement, borderColor: theme.primary }]}>
-                <SymbolView name="exclamationmark.triangle.fill" size={12} tintColor={theme.primary} />
-                <ThemedText style={[styles.attentionPillText, { color: theme.primary }]}>
-                  {attentionLabel}
+            {attentionBadge && (
+              <View style={[styles.attentionPill, { backgroundColor: theme.backgroundElement, borderColor: attentionBadge.color }]}>
+                <SymbolView name={attentionBadge.icon} size={12} tintColor={attentionBadge.color} />
+                <ThemedText numberOfLines={1} style={[styles.attentionPillText, { color: attentionBadge.color }]}>
+                  {attentionBadge.label}
                 </ThemedText>
               </View>
             )}
           </View>
 
-          <View style={styles.serviceTileRow}>
-            {visibleSummaries.map((summary) => renderServiceTile(summary, true))}
+          <View style={styles.clientMetaRow}>
+            <ThemedText numberOfLines={1} themeColor="textSecondary" style={styles.clientPhone}>
+              {item.phone || 'No phone added'}
+            </ThemedText>
+            <View style={styles.serviceStatusRow}>
+              {item.packageSummaries.map(renderServiceStatusPill)}
+            </View>
           </View>
         </ThemedView>
       </TouchableOpacity>
@@ -602,18 +669,15 @@ export default function ClientsScreen() {
     <View style={styles.skeletonList}>
       {[0, 1, 2].map((item) => (
         <ThemedView key={item} type="surface" style={styles.skeletonCard}>
-          <View style={[styles.skeletonLineLarge, { backgroundColor: theme.backgroundElement }]} />
-          <View style={[styles.skeletonLineSmall, { backgroundColor: theme.backgroundElement }]} />
-          <View style={styles.skeletonBalanceRow}>
-            <View style={styles.skeletonBalance}>
-              <View style={[styles.skeletonAccent, { backgroundColor: theme.backgroundSelected }]} />
-              <View style={[styles.skeletonLineTiny, { backgroundColor: theme.backgroundElement }]} />
-              <View style={[styles.skeletonLineMedium, { backgroundColor: theme.backgroundElement }]} />
-            </View>
-            <View style={styles.skeletonBalance}>
-              <View style={[styles.skeletonAccent, { backgroundColor: theme.backgroundSelected }]} />
-              <View style={[styles.skeletonLineTiny, { backgroundColor: theme.backgroundElement }]} />
-              <View style={[styles.skeletonLineMedium, { backgroundColor: theme.backgroundElement }]} />
+          <View style={styles.skeletonHeaderRow}>
+            <View style={[styles.skeletonLineLarge, { backgroundColor: theme.backgroundElement }]} />
+            <View style={[styles.skeletonBadge, { backgroundColor: theme.backgroundElement }]} />
+          </View>
+          <View style={styles.skeletonMetaRow}>
+            <View style={[styles.skeletonLineSmall, { backgroundColor: theme.backgroundElement }]} />
+            <View style={styles.skeletonStatusRow}>
+              <View style={[styles.skeletonStatusPill, { backgroundColor: theme.backgroundElement }]} />
+              <View style={[styles.skeletonStatusPill, { backgroundColor: theme.backgroundElement }]} />
             </View>
           </View>
         </ThemedView>
@@ -806,36 +870,35 @@ const styles = StyleSheet.create({
   filterCountText: { fontSize: 12, lineHeight: 14, fontWeight: '900', fontVariant: ['tabular-nums'] },
 
   listContent: { paddingHorizontal: Spacing.three, paddingBottom: 100 },
-  clientCard: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, marginBottom: 8, gap: 8, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
+  clientCard: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8, marginBottom: 7, gap: 6, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
   clientCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
-  clientIdentity: { flex: 1 },
+  clientIdentity: { flex: 1, minWidth: 0 },
   clientName: { fontSize: 16, lineHeight: 20, fontWeight: '700' },
   clientPhone: { fontSize: 12, lineHeight: 16, fontWeight: '500' },
-  attentionPill: { flexShrink: 0, maxWidth: 124, minHeight: 28, borderWidth: 1, borderRadius: 14, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  attentionPillText: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
+  attentionPill: { flexShrink: 0, maxWidth: 108, minHeight: 24, borderWidth: 1, borderRadius: 12, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  attentionPillText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
 
-  serviceTileRow: { flexDirection: 'row', gap: Spacing.two, flexWrap: 'wrap' },
+  clientMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  serviceStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
+  serviceStatusPill: { height: 23, maxWidth: 86, borderWidth: 1, borderRadius: 12, paddingHorizontal: 7, justifyContent: 'center', alignItems: 'center' },
+  serviceStatusPillText: { fontSize: 11, lineHeight: 13, fontWeight: '800', fontVariant: ['tabular-nums'] },
   serviceTile: { flex: 1, minWidth: 112, minHeight: 42, paddingLeft: 10, paddingVertical: 2, justifyContent: 'center', overflow: 'hidden' },
-  serviceTileCompact: { minHeight: 28, paddingLeft: 8, paddingVertical: 0 },
   serviceTileAccent: { position: 'absolute', left: 0, top: 5, bottom: 5, width: 3, borderRadius: 2 },
   serviceTileHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
-  serviceTileHeaderCompact: { justifyContent: 'flex-start', gap: 5 },
   serviceTileLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0 },
   serviceTileValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5, flexWrap: 'wrap' },
-  serviceTileValueRowCompact: { marginTop: -1 },
   serviceTileValue: { fontSize: 19, lineHeight: 23, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  serviceTileValueCompact: { fontSize: 15, lineHeight: 18, fontWeight: '600', fontVariant: ['tabular-nums'] },
   serviceTileCaption: { fontSize: 11, fontWeight: '600' },
   emptyText: { textAlign: 'center', marginTop: Spacing.five },
   skeletonList: { gap: 8 },
-  skeletonCard: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 8, gap: 7, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
+  skeletonCard: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8, gap: 7, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
+  skeletonHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  skeletonMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   skeletonLineLarge: { width: '45%', height: 16, borderRadius: 4 },
   skeletonLineSmall: { width: '30%', height: 12, borderRadius: 4 },
-  skeletonBalanceRow: { flexDirection: 'row', gap: Spacing.two },
-  skeletonBalance: { flex: 1, minHeight: 28, paddingLeft: 8, justifyContent: 'center', gap: 4 },
-  skeletonAccent: { position: 'absolute', left: 0, top: 4, bottom: 4, width: 3, borderRadius: 2 },
-  skeletonLineTiny: { width: 38, height: 8, borderRadius: 4 },
-  skeletonLineMedium: { width: 52, height: 12, borderRadius: 4 },
+  skeletonBadge: { width: 64, height: 22, borderRadius: 11 },
+  skeletonStatusRow: { flexDirection: 'row', gap: 6, flexShrink: 0 },
+  skeletonStatusPill: { width: 58, height: 23, borderRadius: 12 },
   fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
 
   sheetScroll: { flex: 1 },
