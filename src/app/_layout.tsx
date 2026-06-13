@@ -1,7 +1,7 @@
 // src/app/_layout.tsx
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { DarkTheme, DefaultTheme, Tabs, ThemeProvider, useRouter, useSegments } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { AppSymbol } from '@/components/app-symbol';
 import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -56,7 +56,7 @@ function RootLayoutNav() {
               options={{
                 title: 'Schedule',
                 tabBarIcon: ({ color }) => (
-                  <SymbolView name="calendar" size={24} tintColor={color} />
+                  <AppSymbol name="calendar" size={24} tintColor={color} />
                 ),
               }}
             />
@@ -67,7 +67,7 @@ function RootLayoutNav() {
                 title: 'Clients',
                 lazy: false,
                 tabBarIcon: ({ color }) => (
-                  <SymbolView name="person.3.fill" size={24} tintColor={color} />
+                  <AppSymbol name="person.3.fill" size={24} tintColor={color} />
                 ),
               }}
             />

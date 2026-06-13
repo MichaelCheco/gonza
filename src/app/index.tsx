@@ -2,7 +2,7 @@ import { BottomSheetBackdrop, BottomSheetFlatList, BottomSheetModal, BottomSheet
 import DateTimePicker from '@react-native-community/datetimepicker';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
-import { SymbolView } from 'expo-symbols';
+import { AppSymbol } from '@/components/app-symbol';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Keyboard, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { CalendarProvider, WeekCalendar } from 'react-native-calendars';
@@ -482,14 +482,14 @@ export default function HomeScreen() {
         onPress={() => handlePTCheckIn(item)}
         activeOpacity={0.8}
       >
-        <SymbolView name="checkmark.circle.fill" size={22} tintColor={theme.onSuccess} />
+        <AppSymbol name="checkmark.circle.fill" size={22} tintColor={theme.onSuccess} />
       </TouchableOpacity>
     );
   };
 
   const renderRightActions = (item: SessionType) => (
     <TouchableOpacity style={[styles.swipeAction, { backgroundColor: theme.primary, marginLeft: Spacing.two }]} onPress={() => handleDelete(item)} activeOpacity={0.8}>
-      <SymbolView name="trash.fill" size={20} tintColor={theme.onPrimary} />
+      <AppSymbol name="trash.fill" size={20} tintColor={theme.onPrimary} />
     </TouchableOpacity>
   );
 
@@ -520,7 +520,7 @@ export default function HomeScreen() {
                         style={[styles.ptCheckedBadge, { backgroundColor: theme.backgroundSelected, borderColor: theme.surface }]}
                         accessibilityLabel="Checked in"
                       >
-                        <SymbolView name="checkmark" size={12} tintColor={theme.textSecondary} />
+                        <AppSymbol name="checkmark" size={12} tintColor={theme.textSecondary} />
                       </View>
                     ) : (
                       <TouchableOpacity
@@ -544,7 +544,7 @@ export default function HomeScreen() {
                   </>
                 ) : (
                   <View style={styles.rosterChevron}>
-                    <SymbolView name="chevron.right" size={14} tintColor={theme.textSecondary} />
+                    <AppSymbol name="chevron.right" size={14} tintColor={theme.textSecondary} />
                   </View>
                 )}
               </View>
@@ -567,7 +567,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
             )}
             <TouchableOpacity style={[styles.headerIconButton, { backgroundColor: theme.surface }]} onPress={handleSignOut} activeOpacity={0.8}>
-              <SymbolView name="rectangle.portrait.and.arrow.right" size={16} tintColor={theme.textSecondary} />
+              <AppSymbol name="rectangle.portrait.and.arrow.right" size={16} tintColor={theme.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -602,7 +602,7 @@ export default function HomeScreen() {
                 <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 40 }} />
               ) : (
                 <TouchableOpacity activeOpacity={0.7} onPress={handleAddSession} style={styles.emptyState}>
-                  <SymbolView name="calendar.badge.plus" size={40} tintColor={theme.textSecondary} style={{ marginBottom: Spacing.two }} />
+                  <AppSymbol name="calendar.badge.plus" size={40} tintColor={theme.textSecondary} style={{ marginBottom: Spacing.two }} />
                   <ThemedText themeColor="textSecondary" style={styles.emptyText}>No sessions scheduled.{"\n"}Tap to add a PT session.</ThemedText>
                 </TouchableOpacity>
               )
@@ -611,7 +611,7 @@ export default function HomeScreen() {
         </View>
 
         <TouchableOpacity style={[styles.fab, { backgroundColor: theme.primary }]} activeOpacity={0.8} onPress={handleAddSession}>
-          <SymbolView name="plus" size={24} tintColor={theme.onPrimary} weight="bold" />
+          <AppSymbol name="plus" size={24} tintColor={theme.onPrimary} weight="bold" />
         </TouchableOpacity>
       </SafeAreaView>
 
@@ -728,7 +728,7 @@ export default function HomeScreen() {
                     onPress={() => toggleRosterCheckIn(item)}
                     activeOpacity={0.7}
                   >
-                    {item.checkedIn && <SymbolView name="arrow.uturn.backward" size={13} tintColor={theme.primary} />}
+                    {item.checkedIn && <AppSymbol name="arrow.uturn.backward" size={13} tintColor={theme.primary} />}
                     <ThemedText style={[styles.rosterCheckInText, { color: item.checkedIn ? theme.primary : theme.text }]}>
                       {item.checkedIn ? 'Undo' : 'Check In'}
                     </ThemedText>

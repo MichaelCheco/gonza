@@ -15,8 +15,9 @@ import {
 } from '../../utils/gym-logic';
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import dayjs from 'dayjs';
+import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { AppSymbol } from '@/components/app-symbol';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,6 +36,16 @@ type ClientRecord = {
 const SERVICE_ORDER = [SERVICE_TYPES.GROUP, SERVICE_TYPES.PERSONAL_TRAINING];
 type ClientFilter = 'all' | 'attention';
 
+const formatPhoneNumber = (value: string | null | undefined) => {
+  const digits = (value ?? '').replace(/\D/g, '');
+  const phoneDigits = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  const limitedDigits = phoneDigits.slice(0, 10);
+
+  if (limitedDigits.length <= 3) return limitedDigits;
+  if (limitedDigits.length <= 6) return `${limitedDigits.slice(0, 3)}-${limitedDigits.slice(3)}`;
+  return `${limitedDigits.slice(0, 3)}-${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
+};
+
 export default function ClientsScreen() {
   const theme = useTheme();
 
@@ -49,6 +60,7 @@ export default function ClientsScreen() {
 
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [phoneCopied, setPhoneCopied] = useState(false);
 
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const hasLoadedRef = useRef(false);
@@ -137,6 +149,13 @@ export default function ClientsScreen() {
     fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    if (!phoneCopied) return;
+
+    const timeout = setTimeout(() => setPhoneCopied(false), 1400);
+    return () => clearTimeout(timeout);
+  }, [phoneCopied]);
+
   useFocusEffect(
     useCallback(() => {
       if (hasLoadedRef.current) fetchData();
@@ -216,6 +235,7 @@ export default function ClientsScreen() {
     setEditingClient(null);
     setFullName('');
     setPhone('');
+    setPhoneCopied(false);
     setSelectedPackageId(packages[0]?.id ?? null);
     bottomSheetModalRef.current?.present();
   };
@@ -223,12 +243,26 @@ export default function ClientsScreen() {
   const handleClientPress = (client: ClientRecord) => {
     setEditingClient(client);
     setFullName(client.name);
-    setPhone(client.phone || '');
+    setPhone(formatPhoneNumber(client.phone));
+    setPhoneCopied(false);
     setSelectedPackageId(packages[0]?.id ?? null);
     bottomSheetModalRef.current?.present();
   };
 
   const closeBottomSheet = () => bottomSheetModalRef.current?.dismiss();
+
+  const handlePhoneChange = (value: string) => {
+    setPhone(formatPhoneNumber(value));
+    if (phoneCopied) setPhoneCopied(false);
+  };
+
+  const handleCopyPhone = async () => {
+    const formattedPhone = formatPhoneNumber(phone);
+    if (!formattedPhone) return;
+
+    await Clipboard.setStringAsync(formattedPhone);
+    setPhoneCopied(true);
+  };
 
   const handleAddPackage = (packageOverride?: PackageRow) => {
     const packageToAdd = packageOverride ?? selectedPackage;
@@ -323,6 +357,7 @@ export default function ClientsScreen() {
   const handleSave = async () => {
     const trimmedName = fullName.trim();
     if (!trimmedName) return Alert.alert('Error', 'Please enter a name.');
+    const formattedPhone = formatPhoneNumber(phone);
 
     const [firstName, ...lastNameArr] = trimmedName.split(/\s+/);
     const lastName = lastNameArr.join(' ');
@@ -330,7 +365,7 @@ export default function ClientsScreen() {
     if (editingClient) {
       const { error } = await supabase
         .from('clients')
-        .update({ first_name: firstName, last_name: lastName, phone })
+        .update({ first_name: firstName, last_name: lastName, phone: formattedPhone || null })
         .eq('id', editingClient.id);
 
       if (error) Alert.alert('Error', error.message);
@@ -346,7 +381,7 @@ export default function ClientsScreen() {
 
     const { data: newClient, error: clientErr } = await supabase
       .from('clients')
-      .insert({ first_name: firstName, last_name: lastName, phone })
+      .insert({ first_name: firstName, last_name: lastName, phone: formattedPhone || null })
       .select()
       .single();
 
@@ -475,7 +510,7 @@ export default function ClientsScreen() {
         <View style={[styles.serviceTileAccent, { backgroundColor: palette.border }]} />
         <View style={styles.serviceTileHeader}>
           <ThemedText style={[styles.serviceTileLabel, { color: palette.text }]}>{summary.label}</ThemedText>
-          {summary.needsAttention && palette.icon && <SymbolView name={palette.icon} size={13} tintColor={palette.border} />}
+          {summary.needsAttention && palette.icon && <AppSymbol name={palette.icon} size={13} tintColor={palette.border} />}
         </View>
         <View style={styles.serviceTileValueRow}>
           <ThemedText style={[styles.serviceTileValue, { color: palette.text }]}>{value}</ThemedText>
@@ -525,7 +560,7 @@ export default function ClientsScreen() {
               onPress={() => handleAdjustPackageCredits(clientPackage)}
               activeOpacity={0.8}
             >
-              <SymbolView name="slider.horizontal.3" size={14} tintColor={theme.textSecondary} />
+              <AppSymbol name="slider.horizontal.3" size={14} tintColor={theme.textSecondary} />
               <ThemedText style={[styles.historySmallButtonText, { color: theme.textSecondary }]}>Adjust</ThemedText>
             </TouchableOpacity>
           )}
@@ -542,7 +577,7 @@ export default function ClientsScreen() {
             disabled={!isUnpaid || isVoided}
             activeOpacity={isUnpaid ? 0.8 : 1}
           >
-            <SymbolView name="dollarsign.circle.fill" size={15} tintColor={isUnpaid ? theme.onSuccess : theme.textSecondary} />
+            <AppSymbol name="dollarsign.circle.fill" size={15} tintColor={isUnpaid ? theme.onSuccess : theme.textSecondary} />
             <ThemedText style={[styles.markPaidText, { color: isUnpaid ? theme.onSuccess : theme.textSecondary }]}>
               {isUnpaid ? 'Mark Paid' : isVoided ? 'Voided' : 'Paid'}
             </ThemedText>
@@ -554,7 +589,7 @@ export default function ClientsScreen() {
               onPress={() => handleVoidPackage(clientPackage)}
               activeOpacity={0.8}
             >
-              <SymbolView name="xmark.circle.fill" size={14} tintColor={theme.primary} />
+              <AppSymbol name="xmark.circle.fill" size={14} tintColor={theme.primary} />
               <ThemedText style={[styles.historySmallButtonText, { color: theme.primary }]}>Void</ThemedText>
             </TouchableOpacity>
           )}
@@ -620,7 +655,7 @@ export default function ClientsScreen() {
             onPress={() => handleAddPackage(pkg)}
             activeOpacity={0.8}
           >
-            <SymbolView name="plus" size={14} tintColor={theme.onControlSelected} weight="bold" />
+            <AppSymbol name="plus" size={14} tintColor={theme.onControlSelected} weight="bold" />
           </TouchableOpacity>
         ) : (
           <View style={[styles.radioMark, { borderColor: isSelected ? theme.controlSelected : theme.textSecondary }]}>
@@ -644,7 +679,7 @@ export default function ClientsScreen() {
             </View>
             {attentionBadge && (
               <View style={[styles.attentionPill, { backgroundColor: theme.backgroundElement, borderColor: attentionBadge.color }]}>
-                <SymbolView name={attentionBadge.icon} size={12} tintColor={attentionBadge.color} />
+                <AppSymbol name={attentionBadge.icon} size={12} tintColor={attentionBadge.color} />
                 <ThemedText numberOfLines={1} style={[styles.attentionPillText, { color: attentionBadge.color }]}>
                   {attentionBadge.label}
                 </ThemedText>
@@ -654,7 +689,7 @@ export default function ClientsScreen() {
 
           <View style={styles.clientMetaRow}>
             <ThemedText numberOfLines={1} themeColor="textSecondary" style={styles.clientPhone}>
-              {item.phone || 'No phone added'}
+              {formatPhoneNumber(item.phone) || 'No phone added'}
             </ThemedText>
             <View style={styles.serviceStatusRow}>
               {item.packageSummaries.map(renderServiceStatusPill)}
@@ -698,7 +733,7 @@ export default function ClientsScreen() {
         </View>
 
         <View style={[styles.searchContainer, { backgroundColor: theme.backgroundElement }]}>
-          <SymbolView name="magnifyingglass" size={18} tintColor={theme.textSecondary} style={styles.searchIcon} />
+          <AppSymbol name="magnifyingglass" size={18} tintColor={theme.textSecondary} style={styles.searchIcon} />
           <TextInput
             style={[styles.searchInput, { color: theme.text }]}
             placeholder="Search clients..."
@@ -730,7 +765,7 @@ export default function ClientsScreen() {
         />
 
         <TouchableOpacity style={[styles.fab, { backgroundColor: theme.primary }]} activeOpacity={0.8} onPress={handleAddClient}>
-          <SymbolView name="person.badge.plus" size={22} tintColor={theme.onPrimary} />
+          <AppSymbol name="person.badge.plus" size={22} tintColor={theme.onPrimary} />
         </TouchableOpacity>
       </SafeAreaView>
 
@@ -768,7 +803,7 @@ export default function ClientsScreen() {
                   <View style={styles.sheetSummaryText}>
                     <ThemedText style={styles.sheetSummaryName}>{editingClient.name}</ThemedText>
                     <ThemedText themeColor="textSecondary" style={styles.sheetSummaryMeta}>
-                      {editingClient.phone || 'No phone added'}
+                      {formatPhoneNumber(editingClient.phone) || 'No phone added'}
                     </ThemedText>
                   </View>
                 </View>
@@ -776,7 +811,7 @@ export default function ClientsScreen() {
                 {!getClientAttention(editingClient).active && (
                   <View style={styles.sheetSummaryStatusRow}>
                     <View style={[styles.statusPill, { backgroundColor: theme.backgroundElement, borderColor: theme.primary }]}>
-                      <SymbolView name="exclamationmark.triangle.fill" size={14} tintColor={theme.primary} />
+                      <AppSymbol name="exclamationmark.triangle.fill" size={14} tintColor={theme.primary} />
                       <ThemedText style={[styles.statusPillText, { color: theme.primary }]}>
                         {getClientAttention(editingClient).reason}
                       </ThemedText>
@@ -794,11 +829,25 @@ export default function ClientsScreen() {
               placeholderTextColor={theme.textSecondary}
             />
 
-            <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Phone Number</ThemedText>
+            <View style={styles.inputLabelRow}>
+              <ThemedText themeColor="textSecondary" style={[styles.inputLabel, styles.inputLabelInline]}>Phone Number</ThemedText>
+              {!!formatPhoneNumber(phone) && (
+                <TouchableOpacity
+                  style={[styles.copyPhoneButton, { backgroundColor: theme.backgroundElement, borderColor: theme.surface }]}
+                  onPress={handleCopyPhone}
+                  activeOpacity={0.8}
+                >
+                  <AppSymbol name={phoneCopied ? 'checkmark' : 'doc.on.doc'} size={13} tintColor={phoneCopied ? theme.success : theme.textSecondary} />
+                  <ThemedText style={[styles.copyPhoneText, { color: phoneCopied ? theme.success : theme.textSecondary }]}>
+                    {phoneCopied ? 'Copied' : 'Copy'}
+                  </ThemedText>
+                </TouchableOpacity>
+              )}
+            </View>
             <BottomSheetTextInput
               style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
               value={phone}
-              onChangeText={setPhone}
+              onChangeText={handlePhoneChange}
               keyboardType="phone-pad"
               placeholderTextColor={theme.textSecondary}
             />
@@ -914,7 +963,11 @@ const styles = StyleSheet.create({
   sheetSummaryStatusRow: { flexDirection: 'row', alignItems: 'center' },
   statusPill: { borderWidth: 1, borderRadius: 15, minHeight: 30, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
   statusPillText: { fontSize: 12, fontWeight: '700' },
+  inputLabelRow: { minHeight: 30, marginBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   inputLabel: { fontWeight: '600', marginBottom: 6, fontSize: 13 },
+  inputLabelInline: { marginBottom: 0 },
+  copyPhoneButton: { minHeight: 28, borderWidth: 1, borderRadius: 14, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  copyPhoneText: { fontSize: 12, lineHeight: 14, fontWeight: '800' },
   input: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, fontSize: 15, marginBottom: Spacing.three },
 
   section: { marginBottom: Spacing.three },
