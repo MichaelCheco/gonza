@@ -2,6 +2,7 @@ import dayjs from 'dayjs';
 
 import {
   ClientPackageRow,
+  isFirstClassFreePackage,
   PackageRow,
   SERVICE_TYPES,
   ServiceSummary,
@@ -23,6 +24,8 @@ export type ClientRecord = {
 export type ClientOption = {
   id: string;
   name: string;
+  groupStatusLabel: string;
+  groupStatusTone: 'ok' | 'attention' | 'last';
 };
 
 export type SessionType = {
@@ -39,7 +42,12 @@ export type RosterItem = {
   clientId: string;
   name: string;
   checkedIn: boolean;
+  clientPackageId: string | null;
+  remainingAfter: number | null;
+  status: RosterStatus;
 };
+
+export type RosterStatus = 'checked_in' | 'last_class' | 'first_class' | 'no_active_package' | 'already_checked_in';
 
 const SERVICE_ORDER = [SERVICE_TYPES.GROUP, SERVICE_TYPES.PERSONAL_TRAINING];
 
@@ -64,10 +72,35 @@ export function decorateClient(client: any): ClientRecord {
   };
 }
 
-export function toClientOption(client: Pick<ClientRecord, 'id' | 'name'>): ClientOption {
+function getGroupRosterPreview(client: ClientRecord): Pick<ClientOption, 'groupStatusLabel' | 'groupStatusTone'> {
+  const groupSummary = client.packageSummaries.find((summary) => summary.serviceType === SERVICE_TYPES.GROUP);
+
+  if (!groupSummary || groupSummary.totalCount === 0) {
+    return { groupStatusLabel: 'No package', groupStatusTone: 'attention' };
+  }
+
+  if (groupSummary.unpaidCount > 0) {
+    return { groupStatusLabel: 'Unpaid', groupStatusTone: 'attention' };
+  }
+
+  if (groupSummary.usableClasses <= 0) {
+    return { groupStatusLabel: 'No active package', groupStatusTone: 'attention' };
+  }
+
+  if (groupSummary.usableClasses === 1) {
+    return { groupStatusLabel: 'Last class', groupStatusTone: 'last' };
+  }
+
+  return { groupStatusLabel: `${groupSummary.usableClasses} left`, groupStatusTone: 'ok' };
+}
+
+export function toClientOption(client: ClientRecord): ClientOption {
+  const groupPreview = getGroupRosterPreview(client);
+
   return {
     id: client.id.toString(),
     name: client.name,
+    ...groupPreview,
   };
 }
 
@@ -148,7 +181,12 @@ export async function fetchRoster(classId: string): Promise<RosterItem[]> {
       id,
       client_id,
       client_package_id,
-      clients ( id, first_name, last_name )
+      clients ( id, first_name, last_name ),
+      client_packages (
+        id,
+        classes_remaining,
+        packages ( id, name, service_type )
+      )
     `)
     .eq('class_id', classId);
 
@@ -156,12 +194,26 @@ export async function fetchRoster(classId: string): Promise<RosterItem[]> {
 
   return (data ?? []).map((attendanceRow) => {
     const clientData = attendanceRow.clients as any;
+    const clientPackageData = attendanceRow.client_packages as any;
+    const clientPackage = Array.isArray(clientPackageData) ? clientPackageData[0] : clientPackageData;
+    const remainingAfter = typeof clientPackage?.classes_remaining === 'number' ? clientPackage.classes_remaining : null;
+    const checkedIn = !!attendanceRow.client_package_id;
+    let status: RosterStatus = checkedIn ? 'checked_in' : 'no_active_package';
+
+    if (checkedIn && isFirstClassFreePackage(clientPackage?.packages)) {
+      status = 'first_class';
+    } else if (checkedIn && remainingAfter === 0) {
+      status = 'last_class';
+    }
 
     return {
       id: attendanceRow.id.toString(),
       clientId: attendanceRow.client_id.toString(),
-      name: `${clientData.first_name} ${clientData.last_name}`,
-      checkedIn: !!attendanceRow.client_package_id,
+      name: `${clientData.first_name} ${clientData.last_name}`.trim(),
+      checkedIn,
+      clientPackageId: attendanceRow.client_package_id?.toString() ?? null,
+      remainingAfter,
+      status,
     };
   });
 }

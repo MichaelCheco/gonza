@@ -20,6 +20,7 @@ import {
   fetchClients,
   fetchRoster,
   gymQueryKeys,
+  RosterItem,
   SessionType,
   toClientOption,
 } from '@/lib/gym-queries';
@@ -56,6 +57,8 @@ export default function HomeScreen() {
 
   // For adding walk-ins to the roster
   const [addWalkInQuery, setAddWalkInQuery] = useState('');
+  const [rosterActionClientId, setRosterActionClientId] = useState<string | null>(null);
+  const [creatingRosterClient, setCreatingRosterClient] = useState(false);
   const [ptCheckInStates, setPtCheckInStates] = useState<Record<string, CheckInState>>({});
 
   const [editingSession, setEditingSession] = useState<SessionType | null>(null);
@@ -136,20 +139,49 @@ export default function HomeScreen() {
 
   // --- Add Walk-in to Roster ---
   const handleAddWalkIn = async (client: ClientOption) => {
-    if (!selectedGroupClass) return;
+    if (!selectedGroupClass || rosterActionClientId) return;
 
-    const { error } = await supabase.from('attendance').insert({
-      class_id: selectedGroupClass.id,
-      client_id: client.id
+    setRosterActionClientId(client.id);
+
+    const { error } = await supabase.rpc('add_group_roster_check_in', {
+      p_class_id: parseInt(selectedGroupClass.id, 10),
+      p_client_id: parseInt(client.id, 10),
     });
 
+    setRosterActionClientId(null);
+
     if (error) {
-      Alert.alert("Error", "Could not add client to roster.");
+      Alert.alert('Roster Check-In Failed', error.message);
     } else {
       setAddWalkInQuery('');
       Keyboard.dismiss();
-      refreshScheduleState(selectedGroupClass.id);
+      await refreshScheduleState(selectedGroupClass.id);
     }
+  };
+
+  const handleCreateWalkIn = async () => {
+    if (!selectedGroupClass || creatingRosterClient) return;
+
+    const trimmedName = addWalkInQuery.trim().replace(/\s+/g, ' ');
+    if (!trimmedName) return;
+
+    setCreatingRosterClient(true);
+
+    const { error } = await supabase.rpc('create_client_and_group_check_in', {
+      p_class_id: parseInt(selectedGroupClass.id, 10),
+      p_full_name: trimmedName,
+    });
+
+    setCreatingRosterClient(false);
+
+    if (error) {
+      Alert.alert('Walk-In Check-In Failed', error.message);
+      return;
+    }
+
+    setAddWalkInQuery('');
+    Keyboard.dismiss();
+    await refreshScheduleState(selectedGroupClass.id);
   };
 
   const filteredClients = useMemo(() => {
@@ -161,6 +193,22 @@ export default function HomeScreen() {
     if (!rosterSearchQuery) return rosterData;
     return rosterData.filter(c => c.name.toLowerCase().includes(rosterSearchQuery.toLowerCase()));
   }, [rosterSearchQuery, rosterData]);
+
+  const rosteredClientIds = useMemo(() => new Set(rosterData.map((item) => item.clientId)), [rosterData]);
+  const addWalkInName = addWalkInQuery.trim().replace(/\s+/g, ' ');
+  const addWalkInNameLower = addWalkInName.toLowerCase();
+  const rosterClientMatches = useMemo(() => {
+    if (!addWalkInNameLower) return [];
+
+    return clients
+      .filter((client) => !rosteredClientIds.has(client.id))
+      .filter((client) => client.name.toLowerCase().includes(addWalkInNameLower))
+      .slice(0, 8);
+  }, [addWalkInNameLower, clients, rosteredClientIds]);
+  const hasExactClientMatch = useMemo(() => (
+    clients.some((client) => client.name.trim().toLowerCase() === addWalkInNameLower)
+  ), [addWalkInNameLower, clients]);
+  const canCreateRosterClient = addWalkInName.length > 1 && !hasExactClientMatch;
 
   const handleSelectedDateChange = (date: string) => {
     setSelectedDate(date);
@@ -183,44 +231,28 @@ export default function HomeScreen() {
     }
   };
 
-  const toggleRosterCheckIn = async (rosterItem: any) => {
-    if (!selectedGroupClass) return;
+  const toggleRosterCheckIn = async (rosterItem: RosterItem) => {
+    if (!selectedGroupClass || !rosterItem.checkedIn) return;
 
-    if (rosterItem.checkedIn) {
-      return Alert.alert('Undo Check-In', `Restore one credit for ${rosterItem.name}?`, [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Undo',
-          style: 'destructive',
-          onPress: async () => {
-            const { data: success, error } = await supabase.rpc('undo_check_in', {
-              p_class_id: parseInt(selectedGroupClass.id),
-              p_client_id: parseInt(rosterItem.clientId),
-            });
+    return Alert.alert('Undo Check-In', `Restore one credit for ${rosterItem.name}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Undo',
+        style: 'destructive',
+        onPress: async () => {
+          const { data: success, error } = await supabase.rpc('undo_check_in', {
+            p_class_id: parseInt(selectedGroupClass.id, 10),
+            p_client_id: parseInt(rosterItem.clientId, 10),
+          });
 
-            if (error) {
-              Alert.alert('Undo Failed', 'Could not undo this check-in. Please try again.');
-            } else if (success) {
-              refreshScheduleState(selectedGroupClass.id);
-            }
-          },
+          if (error) {
+            Alert.alert('Undo Failed', 'Could not undo this check-in. Please try again.');
+          } else if (success) {
+            await refreshScheduleState(selectedGroupClass.id);
+          }
         },
-      ]);
-    }
-
-    // Call the RPC we made earlier!
-    const { data: success, error } = await supabase.rpc('process_check_in', {
-      p_class_id: parseInt(selectedGroupClass.id),
-      p_client_id: parseInt(rosterItem.clientId)
-    });
-
-    if (error) {
-      Alert.alert("Error", error.message);
-    } else if (success) {
-      refreshScheduleState(selectedGroupClass.id);
-    } else {
-      Alert.alert("Check-in Failed", "This client has no active packages with remaining classes.");
-    }
+      },
+    ]);
   };
 
   const handlePTCheckIn = async (session: SessionType) => {
@@ -442,6 +474,34 @@ export default function HomeScreen() {
     </TouchableOpacity>
   );
 
+  const getRosterStatusDisplay = (item: RosterItem) => {
+    if (item.status === 'first_class') {
+      return { label: 'First class', textColor: theme.success, backgroundColor: theme.backgroundElement };
+    }
+
+    if (item.status === 'last_class') {
+      return { label: 'Last class', textColor: theme.warning, backgroundColor: theme.backgroundElement };
+    }
+
+    if (item.status === 'no_active_package') {
+      return { label: 'No active package', textColor: theme.warning, backgroundColor: theme.backgroundElement };
+    }
+
+    return { label: 'Checked in', textColor: theme.success, backgroundColor: theme.backgroundElement };
+  };
+
+  const getClientPreviewTone = (client: ClientOption) => {
+    if (client.groupStatusTone === 'ok') {
+      return { textColor: theme.success, backgroundColor: theme.backgroundElement };
+    }
+
+    if (client.groupStatusTone === 'last') {
+      return { textColor: theme.warning, backgroundColor: theme.backgroundElement };
+    }
+
+    return { textColor: theme.warning, backgroundColor: theme.backgroundElement };
+  };
+
   const renderClassItem = ({ item }: { item: SessionType }) => {
     const isPT = item.type !== 'Group';
     const checkInState = ptCheckInStates[item.id];
@@ -623,22 +683,59 @@ export default function HomeScreen() {
           <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Add to Roster</ThemedText>
           <BottomSheetTextInput
             style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
-            placeholder="Search clients to add..." placeholderTextColor={theme.textSecondary}
+            placeholder="Search clients or enter a walk-in..." placeholderTextColor={theme.textSecondary}
             value={addWalkInQuery} onChangeText={setAddWalkInQuery}
           />
 
           {/* Walk-in Autocomplete */}
-          {addWalkInQuery.length > 0 && (
+          {addWalkInQuery.length > 0 && (rosterClientMatches.length > 0 || canCreateRosterClient) && (
             <View style={[styles.autocompleteContainer, { backgroundColor: theme.surface, borderColor: theme.backgroundElement }]}>
               <BottomSheetFlatList
-                data={clients.filter(c => c.name.toLowerCase().includes(addWalkInQuery.toLowerCase()))}
+                data={rosterClientMatches}
                 keyExtractor={(item) => item.id}
                 keyboardShouldPersistTaps="handled"
                 renderItem={({ item }) => (
-                  <TouchableOpacity style={[styles.autocompleteItem, { borderBottomColor: theme.backgroundElement }]} onPress={() => handleAddWalkIn(item)}>
-                    <ThemedText style={{ fontSize: 15 }}>+ Add {item.name}</ThemedText>
+                  <TouchableOpacity
+                    style={[styles.autocompleteItem, styles.rosterAddClientRow, { borderBottomColor: theme.backgroundElement }]}
+                    onPress={() => handleAddWalkIn(item)}
+                    disabled={!!rosterActionClientId || creatingRosterClient}
+                    activeOpacity={0.7}
+                  >
+                      <View style={styles.rosterAddClientText}>
+                        <ThemedText style={styles.rosterAddClientName} numberOfLines={1}>{item.name}</ThemedText>
+                        <View style={[styles.rosterPreviewPill, { backgroundColor: getClientPreviewTone(item).backgroundColor }]}>
+                          <ThemedText style={[styles.rosterPreviewPillText, { color: getClientPreviewTone(item).textColor }]}>{item.groupStatusLabel}</ThemedText>
+                        </View>
+                      </View>
+                    {rosterActionClientId === item.id ? (
+                      <ActivityIndicator size="small" color={theme.primary} />
+                    ) : (
+                      <AppSymbol name="checkmark" size={17} tintColor={theme.textSecondary} />
+                    )}
                   </TouchableOpacity>
                 )}
+                ListFooterComponent={
+                  canCreateRosterClient ? (
+                    <TouchableOpacity
+                      style={[styles.autocompleteItem, styles.rosterAddClientRow, { borderBottomColor: theme.backgroundElement }]}
+                      onPress={handleCreateWalkIn}
+                      disabled={!!rosterActionClientId || creatingRosterClient}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.rosterAddClientText}>
+                        <ThemedText style={styles.rosterAddClientName} numberOfLines={1}>Create and check in {addWalkInName}</ThemedText>
+                        <View style={[styles.rosterPreviewPill, { backgroundColor: theme.backgroundElement }]}>
+                          <ThemedText style={[styles.rosterPreviewPillText, { color: theme.success }]}>First class</ThemedText>
+                        </View>
+                      </View>
+                      {creatingRosterClient ? (
+                        <ActivityIndicator size="small" color={theme.primary} />
+                      ) : (
+                        <AppSymbol name="person.badge.plus" size={18} tintColor={theme.textSecondary} />
+                      )}
+                    </TouchableOpacity>
+                  ) : null
+                }
               />
             </View>
           )}
@@ -669,19 +766,24 @@ export default function HomeScreen() {
               }
               renderItem={({ item }) => (
                 <View style={[styles.rosterRow, { borderBottomColor: theme.surface }]}>
-                  <View>
-                    <ThemedText style={styles.rosterName}>{item.name}</ThemedText>
+                  <View style={styles.rosterRowMain}>
+                    <ThemedText style={styles.rosterName} numberOfLines={1}>{item.name}</ThemedText>
+                    <View style={[styles.rosterStatusPill, { backgroundColor: getRosterStatusDisplay(item).backgroundColor }]}>
+                      <ThemedText style={[styles.rosterStatusText, { color: getRosterStatusDisplay(item).textColor }]}>
+                        {getRosterStatusDisplay(item).label}
+                      </ThemedText>
+                    </View>
                   </View>
-                  <TouchableOpacity
-                    style={[styles.rosterCheckInBtn, { backgroundColor: item.checkedIn ? theme.backgroundElement : theme.surface }]}
-                    onPress={() => toggleRosterCheckIn(item)}
-                    activeOpacity={0.7}
-                  >
-                    {item.checkedIn && <AppSymbol name="arrow.uturn.backward" size={13} tintColor={theme.primary} />}
-                    <ThemedText style={[styles.rosterCheckInText, { color: item.checkedIn ? theme.primary : theme.text }]}>
-                      {item.checkedIn ? 'Undo' : 'Check In'}
-                    </ThemedText>
-                  </TouchableOpacity>
+                  {item.checkedIn ? (
+                    <TouchableOpacity
+                      style={[styles.rosterUndoButton, { backgroundColor: theme.backgroundElement }]}
+                      onPress={() => toggleRosterCheckIn(item)}
+                      activeOpacity={0.7}
+                      accessibilityLabel={`Undo check-in for ${item.name}`}
+                    >
+                      <AppSymbol name="arrow.uturn.backward" size={14} tintColor={theme.primary} />
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               )}
             />
@@ -740,6 +842,11 @@ const styles = StyleSheet.create({
   input: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, fontSize: 15, marginBottom: Spacing.three },
   autocompleteContainer: { maxHeight: 150, borderWidth: 1, borderRadius: Spacing.two, marginTop: -8, marginBottom: Spacing.three, overflow: 'hidden' },
   autocompleteItem: { padding: 12, borderBottomWidth: 1 },
+  rosterAddClientRow: { minHeight: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  rosterAddClientText: { flex: 1, minWidth: 0, gap: 6 },
+  rosterAddClientName: { fontSize: 15, fontWeight: '700' },
+  rosterPreviewPill: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  rosterPreviewPillText: { fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
   timeSelectorButton: { borderWidth: 1, borderRadius: Spacing.two, padding: 12, marginBottom: Spacing.three, justifyContent: 'center' },
   actionRow: { flexDirection: 'row', gap: Spacing.two },
   saveButton: { paddingVertical: 14, borderRadius: Spacing.two, alignItems: 'center' },
@@ -748,9 +855,11 @@ const styles = StyleSheet.create({
   rosterHeader: { marginBottom: Spacing.three },
   rosterListFrame: { flex: 1, minHeight: 240 },
   rosterRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1 },
+  rosterRowMain: { flex: 1, minWidth: 0, paddingRight: Spacing.two },
   rosterName: { fontSize: 16, fontWeight: '600', marginBottom: 2 },
-  rosterCheckInBtn: { minWidth: 82, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: Spacing.three, paddingVertical: 8, borderRadius: Spacing.two },
-  rosterCheckInText: { fontWeight: '700', fontSize: 13 },
+  rosterStatusPill: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4 },
+  rosterStatusText: { fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
+  rosterUndoButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   rosterEmptyText: { textAlign: 'center', marginTop: Spacing.four },
   rosterRefreshBadge: { position: 'absolute', top: 8, right: 0, width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   rosterSkeletonList: { paddingBottom: Spacing.six },

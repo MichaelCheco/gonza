@@ -80,6 +80,12 @@ This file serves as the source of truth for the Supabase Postgres database layou
 | `client_package_id` | `int8` |  Nullable |
 | `created_at` | `timestamptz` |  |
 
+### Indexes
+
+| Name | Columns | Purpose |
+|------|---------|---------|
+| `attendance_class_client_unique` | `class_id`, `client_id` | Prevents duplicate roster entries for the same client in the same class. |
+
 ## Table `app_admins`
 
 Owner/staff allowlist for the app. For the first owner TestFlight, only the gym owner's Supabase Auth user should be inserted here.
@@ -104,6 +110,8 @@ Row Level Security is enabled on `clients`, `packages`, `client_packages`, `clas
 | Function | Returns | Purpose |
 |----------|---------|---------|
 | `process_check_in(p_class_id bigint, p_client_id bigint)` | `boolean` | Consumes one paid matching package credit and marks attendance checked in. |
+| `add_group_roster_check_in(p_class_id bigint, p_client_id bigint)` | `table` | Adds an existing client to a group roster and consumes one group credit when available, returning row status such as `checked_in`, `last_class`, `no_active_package`, or `already_checked_in`. |
+| `create_client_and_group_check_in(p_class_id bigint, p_full_name text)` | `table` | Creates a walk-in client, attaches the `First Class Free` group package, and checks them into the group roster. |
 | `undo_check_in(p_class_id bigint, p_client_id bigint)` | `boolean` | Restores one consumed package credit and clears `attendance.client_package_id`. |
 | `cancel_session(p_class_id bigint)` | `boolean` | Restores all checked-in credits for a class, deletes attendance rows, then deletes the class. |
 | `generate_classes_from_templates(p_start_date date, p_end_date date)` | `integer` | Inserts missing scheduled classes from `class_templates` within a date range. |

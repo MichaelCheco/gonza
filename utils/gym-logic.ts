@@ -49,7 +49,7 @@ export type ServiceSummary = {
 const normalizePackageName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export function isFirstClassFreePackage(pkg: Pick<PackageRow, 'name'> | null | undefined): boolean {
-  return normalizePackageName(pkg?.name ?? '') === 'First Class Free';
+  return normalizePackageName(pkg?.name ?? '') === 'firstclassfree';
 }
 
 export function isClientPackageUnpaid(clientPackage: Pick<ClientPackageRow, 'payment_status' | 'packages'>): boolean {
