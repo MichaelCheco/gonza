@@ -54,6 +54,7 @@ export default function ClientsScreen() {
   const [adjustingPackageId, setAdjustingPackageId] = useState<number | null>(null);
   const [adjustedCredits, setAdjustedCredits] = useState('');
   const [savingPackageActionId, setSavingPackageActionId] = useState<number | null>(null);
+  const [addingPackageId, setAddingPackageId] = useState<number | null>(null);
 
   const bottomSheetModalRef = useRef<BottomSheetModal>(null);
   const snapPoints = useMemo(() => ['85%'], []);
@@ -169,6 +170,9 @@ export default function ClientsScreen() {
   const selectedPackage = useMemo(() => {
     return packages.find((pkg) => pkg.id === selectedPackageId) ?? packages[0] ?? null;
   }, [packages, selectedPackageId]);
+  const unpaidClientPackages = useMemo(() => {
+    return editingClient?.client_packages.filter(isClientPackageUnpaid) ?? [];
+  }, [editingClient]);
 
   const getVisiblePackageSummaries = (client: ClientRecord) => {
     return client.packageSummaries.filter((summary) => {
@@ -198,6 +202,7 @@ export default function ClientsScreen() {
     setAdjustingPackageId(null);
     setAdjustedCredits('');
     setSavingPackageActionId(null);
+    setAddingPackageId(null);
     setSelectedPackageId(packages[0]?.id ?? null);
     bottomSheetModalRef.current?.present();
   };
@@ -210,6 +215,7 @@ export default function ClientsScreen() {
     setAdjustingPackageId(null);
     setAdjustedCredits('');
     setSavingPackageActionId(null);
+    setAddingPackageId(null);
     setSelectedPackageId(packages[0]?.id ?? null);
     bottomSheetModalRef.current?.present();
   };
@@ -233,28 +239,17 @@ export default function ClientsScreen() {
     setPhoneCopied(true);
   };
 
-  const handleAddPackage = (packageOverride?: PackageRow) => {
+  const handleAddPackage = async (packageOverride?: PackageRow) => {
     const packageToAdd = packageOverride ?? selectedPackage;
     if (!editingClient || !packageToAdd) return;
+    if (addingPackageId !== null) return;
 
-    Alert.alert(
-      'Add Package',
-      `Add ${packageToAdd.name} to ${editingClient.name}?\n\nCredits: ${packageToAdd.total_classes}\nExpires: ${
-        packageToAdd.expires_in_weeks ? `${packageToAdd.expires_in_weeks} weeks` : 'Never'
-      }\nPayment: ${isFirstClassFreePackage(packageToAdd) ? 'Included' : 'Unpaid'}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Add Package',
-          onPress: async () => {
-            const { error } = await supabase.from('client_packages').insert(buildClientPackageInsert(editingClient.id, packageToAdd));
+    setAddingPackageId(packageToAdd.id);
+    const { error } = await supabase.from('client_packages').insert(buildClientPackageInsert(editingClient.id, packageToAdd));
+    setAddingPackageId(null);
 
-            if (error) Alert.alert('Database Error', error.message);
-            else refreshClients();
-          },
-        },
-      ]
-    );
+    if (error) Alert.alert('Database Error', error.message);
+    else refreshClients();
   };
 
   const handleMarkPaid = async (clientPackage: ClientPackageRow) => {
@@ -283,10 +278,10 @@ export default function ClientsScreen() {
   const handleVoidPackage = (clientPackage: ClientPackageRow) => {
     if (!editingClient) return;
 
-    Alert.alert('Void Package', 'Void this unpaid, unused package? This removes it from active balances but keeps it in history.', [
+    Alert.alert('Remove Package', 'Remove this unpaid, unused package from active balances? It will stay in history.', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Void',
+        text: 'Remove',
         style: 'destructive',
         onPress: async () => {
           const { error } = await supabase
@@ -294,7 +289,7 @@ export default function ClientsScreen() {
             .update({ payment_status: 'voided', classes_remaining: 0 })
             .eq('id', clientPackage.id);
 
-          if (error) Alert.alert('Void Failed', 'Could not void this package. Please try again.');
+          if (error) Alert.alert('Remove Failed', 'Could not remove this package. Please try again.');
           else refreshClients();
         },
       },
@@ -396,7 +391,7 @@ export default function ClientsScreen() {
         border: theme.warning,
         text: theme.text,
         muted: theme.textSecondary,
-        icon: 'dollarsign.circle.fill' as const,
+        icon: 'exclamationmark.triangle.fill' as const,
       };
     }
 
@@ -425,7 +420,7 @@ export default function ClientsScreen() {
     if (attention.type === 'unpaid') {
       return {
         label: 'Unpaid',
-        icon: 'dollarsign.circle.fill' as const,
+        icon: 'exclamationmark.triangle.fill' as const,
         color: theme.warning,
       };
     }
@@ -507,12 +502,51 @@ export default function ClientsScreen() {
     );
   };
 
+  const renderUnpaidPackageAction = (clientPackage: ClientPackageRow) => {
+    const pkg = clientPackage.packages;
+    const isSaving = savingPackageActionId === clientPackage.id;
+    const serviceLabel = pkg ? getServiceLabel(pkg.service_type) : 'Package';
+
+    return (
+      <View key={clientPackage.id} style={[styles.unpaidActionRow, { backgroundColor: theme.background, borderColor: theme.surface }]}>
+        <View style={styles.unpaidActionMain}>
+          <View style={styles.unpaidActionTitleRow}>
+            <ThemedText numberOfLines={1} style={styles.unpaidActionTitle}>{pkg?.name ?? 'Unknown Package'}</ThemedText>
+            <View style={[styles.historyServicePill, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText style={styles.historyServiceText}>{serviceLabel}</ThemedText>
+            </View>
+          </View>
+          <ThemedText themeColor="textSecondary" style={styles.unpaidActionMeta}>
+            {clientPackage.classes_remaining} credits waiting for payment
+          </ThemedText>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.quickMarkPaidButton, { backgroundColor: theme.success, borderColor: theme.success }]}
+          onPress={() => handleMarkPaid(clientPackage)}
+          disabled={isSaving}
+          activeOpacity={0.8}
+        >
+          {isSaving ? (
+            <ActivityIndicator size="small" color={theme.onSuccess} />
+          ) : (
+            <>
+              <AppSymbol name="checkmark" size={15} tintColor={theme.onSuccess} />
+              <ThemedText style={[styles.quickMarkPaidText, { color: theme.onSuccess }]}>Mark Paid</ThemedText>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
   const renderPackageHistoryRow = (clientPackage: ClientPackageRow) => {
     const status = getClientPackageStatus(clientPackage);
     const pkg = clientPackage.packages;
     const isUnpaid = isClientPackageUnpaid(clientPackage);
     const isVoided = clientPackage.payment_status === 'voided';
     const canVoid = isUnpaid && !!pkg && clientPackage.classes_remaining === pkg.total_classes;
+    const canAdjust = status.active && clientPackage.payment_status === 'paid';
     const isAdjusting = adjustingPackageId === clientPackage.id;
     const isSaving = savingPackageActionId === clientPackage.id;
     const serviceLabel = pkg ? getServiceLabel(pkg.service_type) : 'Package';
@@ -544,7 +578,7 @@ export default function ClientsScreen() {
               <ThemedText themeColor="textSecondary" style={styles.remainingLabel}>left</ThemedText>
             </View>
 
-            {!isVoided && (
+            {canAdjust && (
               <TouchableOpacity
                 style={[styles.historySmallButton, { backgroundColor: theme.backgroundElement, borderColor: theme.surface }]}
                 onPress={() => handleAdjustPackageCredits(clientPackage)}
@@ -567,7 +601,7 @@ export default function ClientsScreen() {
                   <ActivityIndicator size="small" color={theme.onSuccess} />
                 ) : (
                   <>
-                    <AppSymbol name="dollarsign.circle.fill" size={15} tintColor={theme.onSuccess} />
+                    <AppSymbol name="checkmark" size={15} tintColor={theme.onSuccess} />
                     <ThemedText style={[styles.markPaidText, { color: theme.onSuccess }]}>Mark Paid</ThemedText>
                   </>
                 )}
@@ -575,7 +609,7 @@ export default function ClientsScreen() {
             ) : (
               <View style={[styles.historyStatusPill, { backgroundColor: theme.control, borderColor: theme.surface }]}>
                 <ThemedText style={[styles.historyStatusPillText, { color: theme.textSecondary }]}>
-                  {isVoided ? 'Voided' : 'Paid'}
+                  {isVoided ? 'Removed' : 'Paid'}
                 </ThemedText>
               </View>
             )}
@@ -588,7 +622,7 @@ export default function ClientsScreen() {
                 disabled={isSaving}
               >
                 <AppSymbol name="xmark.circle.fill" size={14} tintColor={theme.primary} />
-                <ThemedText style={[styles.historySmallButtonText, { color: theme.primary }]}>Void</ThemedText>
+                <ThemedText style={[styles.historySmallButtonText, { color: theme.primary }]}>Remove</ThemedText>
               </TouchableOpacity>
             )}
           </View>
@@ -661,7 +695,8 @@ export default function ClientsScreen() {
   };
 
   const renderPackageOption = (pkg: PackageRow) => {
-    const isSelected = selectedPackage?.id === pkg.id;
+    const isSelected = !editingClient && selectedPackage?.id === pkg.id;
+    const isAdding = addingPackageId === pkg.id;
 
     return (
       <TouchableOpacity
@@ -673,8 +708,9 @@ export default function ClientsScreen() {
             borderColor: isSelected ? theme.controlSelected : theme.surface,
           },
         ]}
-        onPress={() => setSelectedPackageId(pkg.id)}
+        onPress={() => editingClient ? handleAddPackage(pkg) : setSelectedPackageId(pkg.id)}
         activeOpacity={0.8}
+        disabled={addingPackageId !== null}
       >
         <View style={styles.packageOptionMain}>
           <ThemedText style={styles.packageOptionTitle}>{pkg.name}</ThemedText>
@@ -684,13 +720,13 @@ export default function ClientsScreen() {
         </View>
 
         {editingClient ? (
-          <TouchableOpacity
-            style={[styles.inlineAddButton, { backgroundColor: theme.controlSelected }]}
-            onPress={() => handleAddPackage(pkg)}
-            activeOpacity={0.8}
-          >
-            <AppSymbol name="plus" size={14} tintColor={theme.onControlSelected} weight="bold" />
-          </TouchableOpacity>
+          <View style={[styles.inlineAddButton, { backgroundColor: theme.controlSelected }]}>
+            {isAdding ? (
+              <ActivityIndicator size="small" color={theme.onControlSelected} />
+            ) : (
+              <AppSymbol name="plus" size={14} tintColor={theme.onControlSelected} weight="bold" />
+            )}
+          </View>
         ) : (
           <View style={[styles.radioMark, { borderColor: isSelected ? theme.controlSelected : theme.textSecondary }]}>
             {isSelected && <View style={[styles.radioMarkInner, { backgroundColor: theme.controlSelected }]} />}
@@ -895,6 +931,15 @@ export default function ClientsScreen() {
               </View>
             )}
 
+            {editingClient && unpaidClientPackages.length > 0 && (
+              <View style={styles.section}>
+                <ThemedText style={styles.sectionSubtitle}>Unpaid</ThemedText>
+                <View style={styles.unpaidActionStack}>
+                  {unpaidClientPackages.map(renderUnpaidPackageAction)}
+                </View>
+              </View>
+            )}
+
             <View style={styles.section}>
               <ThemedText themeColor="textSecondary" style={styles.inputLabel}>
                 {editingClient ? 'Add Package' : 'Initial Package'}
@@ -1020,6 +1065,15 @@ const styles = StyleSheet.create({
   inlineAddButton: { width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center' },
   radioMark: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
   radioMarkInner: { width: 12, height: 12, borderRadius: 6 },
+
+  unpaidActionStack: { gap: Spacing.two },
+  unpaidActionRow: { minHeight: 62, borderWidth: 1, borderRadius: 8, padding: 10, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  unpaidActionMain: { flex: 1, minWidth: 0 },
+  unpaidActionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginBottom: 4 },
+  unpaidActionTitle: { flex: 1, minWidth: 0, fontSize: 14, fontWeight: '900' },
+  unpaidActionMeta: { fontSize: 12, fontWeight: '700' },
+  quickMarkPaidButton: { minWidth: 94, borderWidth: 1, minHeight: 34, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 7, borderRadius: Spacing.two },
+  quickMarkPaidText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
 
   historyCard: { borderWidth: 1, borderRadius: 8, padding: 12, marginBottom: Spacing.two, gap: Spacing.two },
   historyRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },

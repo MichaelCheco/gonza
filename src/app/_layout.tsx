@@ -1,6 +1,6 @@
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useRouter, useSegments } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { useEffect } from 'react';
 import { ActivityIndicator, useColorScheme, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -24,9 +24,6 @@ function LoadingGate() {
 function RootLayoutNav() {
   const scheme = useColorScheme();
   const { status } = useAuth();
-  const segments = useSegments();
-  const router = useRouter();
-  const isAuthRoute = segments[0] === 'auth';
 
   useEffect(() => {
     registerQueryFocusManager();
@@ -34,23 +31,7 @@ function RootLayoutNav() {
 
   useGymRealtimeInvalidation(queryClient, status === 'authorized');
 
-  useEffect(() => {
-    if (status === 'loading' || status === 'checkingAdmin') return;
-
-    if (status === 'authorized' && isAuthRoute) {
-      router.replace('/');
-    } else if (status !== 'authorized' && !isAuthRoute) {
-      router.replace('/auth');
-    }
-  }, [isAuthRoute, router, status]);
-
-  const shouldBlockProtectedRoutes =
-    status === 'loading' ||
-    (status === 'checkingAdmin' && !isAuthRoute) ||
-    (status === 'authorized' && isAuthRoute) ||
-    (status !== 'authorized' && !isAuthRoute);
-
-  if (shouldBlockProtectedRoutes) {
+  if (status === 'loading' || status === 'checkingAdmin') {
     return <LoadingGate />;
   }
 
@@ -58,8 +39,12 @@ function RootLayoutNav() {
     <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
       <BottomSheetModalProvider>
         <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="(tabs)" />
+          <Stack.Protected guard={status !== 'authorized'}>
+            <Stack.Screen name="(auth)" />
+          </Stack.Protected>
+          <Stack.Protected guard={status === 'authorized'}>
+            <Stack.Screen name="(tabs)" />
+          </Stack.Protected>
         </Stack>
       </BottomSheetModalProvider>
     </ThemeProvider>

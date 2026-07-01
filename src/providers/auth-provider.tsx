@@ -46,12 +46,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [message, setMessage] = useState<string | null>(null);
     const adminCheckIdRef = useRef(0);
     const unauthorizedSignOutRef = useRef(false);
+    const statusRef = useRef<AuthStatus>('loading');
+    const verifiedUserIdRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        statusRef.current = status;
+    }, [status]);
 
     const clearProtectedState = useCallback(() => {
         queryClient.clear();
     }, []);
 
     const verifyAdminAccess = useCallback(async (nextSession: Session) => {
+        if (statusRef.current === 'authorized' && verifiedUserIdRef.current === nextSession.user.id) {
+            setSession(nextSession);
+            return;
+        }
+
         const checkId = adminCheckIdRef.current + 1;
         adminCheckIdRef.current = checkId;
 
@@ -68,6 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (error || !data) {
             unauthorizedSignOutRef.current = true;
+            verifiedUserIdRef.current = null;
             clearProtectedState();
             setSession(null);
             setStatus('unauthorized');
@@ -76,6 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
         }
 
+        verifiedUserIdRef.current = nextSession.user.id;
         setSession(nextSession);
         setStatus('authorized');
         setMessage(null);
@@ -94,6 +107,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
             if (event === 'SIGNED_OUT' || !nextSession) {
                 adminCheckIdRef.current += 1;
+                verifiedUserIdRef.current = null;
                 clearProtectedState();
                 setSession(null);
 
@@ -144,6 +158,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const signOut = async () => {
         adminCheckIdRef.current += 1;
+        verifiedUserIdRef.current = null;
         clearProtectedState();
         setSession(null);
         setStatus('signedOut');
