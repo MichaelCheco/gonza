@@ -3,14 +3,10 @@ import { useColorScheme } from 'react-native';
 
 import { AppSymbol } from '@/components/app-symbol';
 import { Colors } from '@/constants/theme';
-import { useAuth } from '@/providers/auth-provider';
 
 export default function TabsLayout() {
   const scheme = useColorScheme();
   const theme = Colors[scheme === 'dark' ? 'dark' : 'light'];
-  const { status } = useAuth();
-
-  if (status !== 'authorized') return null;
 
   return (
     <Tabs

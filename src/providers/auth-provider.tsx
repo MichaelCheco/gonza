@@ -25,6 +25,23 @@ const AuthContext = createContext<AuthContextType>({
 });
 
 const UNAUTHORIZED_MESSAGE = 'This account can sign in, but it has not been granted app access yet.';
+const AUTH_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: PromiseLike<T>, timeoutMs: number, message: string): Promise<T> {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+
+        Promise.resolve(promise)
+            .then((result) => {
+                clearTimeout(timeout);
+                resolve(result);
+            })
+            .catch((error) => {
+                clearTimeout(timeout);
+                reject(error);
+            });
+    });
+}
 
 function getFriendlySignInError(message: string) {
     const normalized = message.toLowerCase();
@@ -69,11 +86,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(nextSession);
         setStatus('checkingAdmin');
 
-        const { data, error } = await supabase
-            .from('app_admins')
-            .select('user_id')
-            .eq('user_id', nextSession.user.id)
-            .maybeSingle();
+        let adminResult: { data: { user_id: string } | null; error: unknown };
+
+        try {
+            adminResult = await withTimeout(
+                supabase
+                    .from('app_admins')
+                    .select('user_id')
+                    .eq('user_id', nextSession.user.id)
+                    .maybeSingle(),
+                AUTH_TIMEOUT_MS,
+                'Timed out while checking app access.'
+            );
+        } catch {
+            adminResult = { data: null, error: new Error('Admin access check failed.') };
+        }
+
+        const { data, error } = adminResult;
 
         if (adminCheckIdRef.current !== checkId) return;
 
@@ -95,14 +124,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }, [clearProtectedState]);
 
     useEffect(() => {
-        supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
-            if (initialSession) {
-                verifyAdminAccess(initialSession);
-            } else {
+        withTimeout(
+            supabase.auth.getSession(),
+            AUTH_TIMEOUT_MS,
+            'Timed out while restoring your session.'
+        )
+            .then(({ data: { session: initialSession } }) => {
+                if (initialSession) {
+                    verifyAdminAccess(initialSession);
+                } else {
+                    setSession(null);
+                    setStatus('signedOut');
+                }
+            })
+            .catch(() => {
+                clearProtectedState();
                 setSession(null);
                 setStatus('signedOut');
-            }
-        });
+                setMessage('We could not restore your session. Please sign in again.');
+            });
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
             if (event === 'SIGNED_OUT' || !nextSession) {
