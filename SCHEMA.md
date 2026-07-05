@@ -12,6 +12,7 @@ This file serves as the source of truth for the Supabase Postgres database layou
 | `first_name` | `text` |  |
 | `last_name` | `text` |  |
 | `phone` | `text` |  Nullable |
+| `instagram_handle` | `text` |  Nullable |
 | `email` | `text` |  Nullable |
 | `created_at` | `timestamptz` |  |
 

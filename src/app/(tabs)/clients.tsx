@@ -39,6 +39,15 @@ const formatPhoneNumber = (value: string | null | undefined) => {
   return `${limitedDigits.slice(0, 3)}-${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
 };
 
+const formatInstagramHandle = (value: string | null | undefined) => {
+  const handle = (value ?? '').trim().replace(/^@+/, '');
+  return handle ? `@${handle}` : '';
+};
+
+const normalizeInstagramHandle = (value: string | null | undefined) => (
+  formatInstagramHandle(value).replace(/^@/, '') || null
+);
+
 const getClientInitials = (name: string) => {
   const initials = name
     .split(' ')
@@ -63,6 +72,7 @@ export default function ClientsScreen() {
 
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
+  const [instagramHandle, setInstagramHandle] = useState('');
   const [phoneCopied, setPhoneCopied] = useState(false);
   const [adjustingPackageId, setAdjustingPackageId] = useState<number | null>(null);
   const [adjustedCredits, setAdjustedCredits] = useState('');
@@ -211,6 +221,7 @@ export default function ClientsScreen() {
     setEditingClientId(null);
     setFullName('');
     setPhone('');
+    setInstagramHandle('');
     setPhoneCopied(false);
     setAdjustingPackageId(null);
     setAdjustedCredits('');
@@ -224,6 +235,7 @@ export default function ClientsScreen() {
     setEditingClientId(client.id);
     setFullName(client.name);
     setPhone(formatPhoneNumber(client.phone));
+    setInstagramHandle(formatInstagramHandle(client.instagram_handle));
     setPhoneCopied(false);
     setAdjustingPackageId(null);
     setAdjustedCredits('');
@@ -242,6 +254,10 @@ export default function ClientsScreen() {
   const handlePhoneChange = (value: string) => {
     setPhone(formatPhoneNumber(value));
     if (phoneCopied) setPhoneCopied(false);
+  };
+
+  const handleInstagramChange = (value: string) => {
+    setInstagramHandle(value.trim() === '@' ? '@' : formatInstagramHandle(value));
   };
 
   const handleCopyPhone = async () => {
@@ -353,6 +369,7 @@ export default function ClientsScreen() {
     const trimmedName = fullName.trim();
     if (!trimmedName) return Alert.alert('Error', 'Please enter a name.');
     const formattedPhone = formatPhoneNumber(phone);
+    const normalizedInstagramHandle = normalizeInstagramHandle(instagramHandle);
 
     const [firstName, ...lastNameArr] = trimmedName.split(/\s+/);
     const lastName = lastNameArr.join(' ');
@@ -360,7 +377,7 @@ export default function ClientsScreen() {
     if (editingClient) {
       const { error } = await supabase
         .from('clients')
-        .update({ first_name: firstName, last_name: lastName, phone: formattedPhone || null })
+        .update({ first_name: firstName, last_name: lastName, phone: formattedPhone || null, instagram_handle: normalizedInstagramHandle })
         .eq('id', editingClient.id);
 
       if (error) Alert.alert('Error', error.message);
@@ -376,7 +393,7 @@ export default function ClientsScreen() {
 
     const { data: newClient, error: clientErr } = await supabase
       .from('clients')
-      .insert({ first_name: firstName, last_name: lastName, phone: formattedPhone || null })
+      .insert({ first_name: firstName, last_name: lastName, phone: formattedPhone || null, instagram_handle: normalizedInstagramHandle })
       .select()
       .single();
 
@@ -737,7 +754,7 @@ export default function ClientsScreen() {
                 <View style={styles.clientIdentity}>
                   <ThemedText numberOfLines={1} style={styles.clientName}>{item.name}</ThemedText>
                   <ThemedText numberOfLines={1} themeColor="textSecondary" style={styles.clientPhone}>
-                    {formatPhoneNumber(item.phone) || 'No phone added'}
+                    {formatInstagramHandle(item.instagram_handle) || formatPhoneNumber(item.phone) || 'No contact added'}
                   </ThemedText>
                 </View>
 
@@ -861,7 +878,10 @@ export default function ClientsScreen() {
                   <View style={styles.sheetSummaryText}>
                     <ThemedText style={styles.sheetSummaryName}>{editingClient.name}</ThemedText>
                     <ThemedText themeColor="textSecondary" style={styles.sheetSummaryMeta}>
-                      {formatPhoneNumber(editingClient.phone) || 'No phone added'}
+                      {[
+                        formatPhoneNumber(editingClient.phone),
+                        formatInstagramHandle(editingClient.instagram_handle),
+                      ].filter(Boolean).join(' • ') || 'No contact added'}
                     </ThemedText>
                   </View>
                 </View>
@@ -907,6 +927,17 @@ export default function ClientsScreen() {
               value={phone}
               onChangeText={handlePhoneChange}
               keyboardType="phone-pad"
+              placeholderTextColor={theme.textSecondary}
+            />
+
+            <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Instagram Handle</ThemedText>
+            <BottomSheetTextInput
+              style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
+              value={instagramHandle}
+              onChangeText={handleInstagramChange}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="@username"
               placeholderTextColor={theme.textSecondary}
             />
 

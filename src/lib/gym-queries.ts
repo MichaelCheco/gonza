@@ -17,6 +17,7 @@ export type ClientRecord = {
   first_name: string;
   last_name: string;
   phone: string | null;
+  instagram_handle: string | null;
   name: string;
   client_packages: ClientPackageRow[];
   packageSummaries: ServiceSummary[];
@@ -114,7 +115,7 @@ export async function fetchClients(): Promise<ClientRecord[]> {
   const { data, error } = await supabase
     .from('clients')
     .select(`
-      id, first_name, last_name, phone,
+      id, first_name, last_name, phone, instagram_handle,
       client_packages (
         id, client_id, package_id, classes_remaining, start_date, expiration_date, payment_status,
         packages ( id, name, price, total_classes, expires_in_weeks, service_type, is_unlimited )
