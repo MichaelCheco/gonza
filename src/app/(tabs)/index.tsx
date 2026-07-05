@@ -581,15 +581,6 @@ export default function HomeScreen() {
           </View>
           <View style={styles.detailsContainer}>
             <ThemedText style={[styles.classTitle, { color: theme.success }]}>Available</ThemedText>
-            <ThemedText themeColor="textSecondary" type="small">Tap to book PT</ThemedText>
-          </View>
-          <View style={styles.cardActionContainer}>
-            <View
-              style={[styles.availableActionBadge, { backgroundColor: theme.backgroundElement }]}
-              accessibilityLabel="Book available slot"
-            >
-              <AppSymbol name="plus" size={14} tintColor={theme.success} weight="bold" />
-            </View>
           </View>
         </ThemedView>
       </TouchableOpacity>
@@ -932,7 +923,6 @@ const styles = StyleSheet.create({
   inlineCheckInText: { fontWeight: '600', fontSize: 13 },
   inlineCheckInError: { maxWidth: 110, marginTop: 4, fontSize: 11, fontWeight: '700', textAlign: 'right' },
   rosterChevron: { flexDirection: 'row', alignItems: 'center' },
-  availableActionBadge: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   swipeAction: { justifyContent: 'center', alignItems: 'center', width: 70, borderRadius: Spacing.two },
 
   fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
