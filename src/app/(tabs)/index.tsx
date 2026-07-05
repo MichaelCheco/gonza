@@ -234,7 +234,11 @@ export default function HomeScreen() {
   const toggleRosterCheckIn = async (rosterItem: RosterItem) => {
     if (!selectedGroupClass || !rosterItem.checkedIn) return;
 
-    return Alert.alert('Undo Check-In', `Restore one credit for ${rosterItem.name}?`, [
+    const undoMessage = rosterItem.isUnlimited
+      ? `Undo check-in for ${rosterItem.name}?`
+      : `Restore one credit for ${rosterItem.name}?`;
+
+    return Alert.alert('Undo Check-In', undoMessage, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Undo',
@@ -431,7 +435,7 @@ export default function HomeScreen() {
 
   // --- 4. Delete from Supabase ---
   const handleDelete = (session: SessionType) => {
-    Alert.alert("Cancel Session", `Remove ${session.title}? Any checked-in credits will be restored.`, [
+    Alert.alert("Cancel Session", `Remove ${session.title}? Any checked-in finite package credits will be restored.`, [
       { text: "No", style: "cancel" },
       {
         text: "Cancel Session",

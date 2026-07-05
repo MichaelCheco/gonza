@@ -9,6 +9,7 @@ import {
   getServiceLabel,
   isClientPackageUnpaid,
   isFirstClassFreePackage,
+  isUnlimitedPackage,
   PackageRow,
   SERVICE_TYPES,
   ServiceSummary,
@@ -36,6 +37,18 @@ const formatPhoneNumber = (value: string | null | undefined) => {
   if (limitedDigits.length <= 3) return limitedDigits;
   if (limitedDigits.length <= 6) return `${limitedDigits.slice(0, 3)}-${limitedDigits.slice(3)}`;
   return `${limitedDigits.slice(0, 3)}-${limitedDigits.slice(3, 6)}-${limitedDigits.slice(6)}`;
+};
+
+const getClientInitials = (name: string) => {
+  const initials = name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
+
+  return initials || '?';
 };
 
 export default function ClientsScreen() {
@@ -124,7 +137,7 @@ export default function ClientsScreen() {
 
   const getClientAttention = useCallback((client: ClientRecord) => {
     const hasUnpaid = client.client_packages.some(isClientPackageUnpaid);
-    const hasUsableCredits = client.packageSummaries.some((summary) => summary.usableClasses > 0);
+    const hasUsableCredits = client.packageSummaries.some((summary) => summary.hasUnlimited || summary.usableClasses > 0);
     const hasPackageHistory = client.client_packages.length > 0;
 
     if (hasUnpaid) return { active: false, reason: 'Unpaid balance', type: 'unpaid' as const };
@@ -187,7 +200,7 @@ export default function ClientsScreen() {
     return {
       client_id: clientId,
       package_id: pkg.id,
-      classes_remaining: pkg.total_classes,
+      classes_remaining: isUnlimitedPackage(pkg) ? null : pkg.total_classes,
       start_date: startDate,
       expiration_date: calculateExpirationDateFromPackage(pkg, startDate),
       payment_status: isFirstClassFreePackage(pkg) ? 'paid' : 'unpaid',
@@ -383,7 +396,7 @@ export default function ClientsScreen() {
   const getStatusPalette = (summary: ServiceSummary) => {
     const hasPackage = summary.totalCount > 0;
     const isUnpaid = summary.unpaidCount > 0;
-    const isEmpty = !hasPackage || summary.usableClasses === 0;
+    const isEmpty = !summary.hasUnlimited && (!hasPackage || summary.usableClasses === 0);
 
     if (isUnpaid) {
       return {
@@ -414,78 +427,46 @@ export default function ClientsScreen() {
     };
   };
 
-  const getAttentionBadge = (attention: ReturnType<typeof getClientAttention>) => {
-    if (attention.active) return null;
-
+  const getClientStateChip = (attention: ReturnType<typeof getClientAttention>) => {
     if (attention.type === 'unpaid') {
       return {
-        label: 'Unpaid',
+        label: 'Unpaid balance',
         icon: 'exclamationmark.triangle.fill' as const,
         color: theme.warning,
       };
     }
 
-    return {
-      label: attention.reason === 'No packages' ? 'No packages' : 'No credits',
-      icon: 'exclamationmark.triangle.fill' as const,
-      color: theme.primary,
-    };
-  };
-
-  const getServiceStatusLabel = (summary: ServiceSummary) => {
-    if (summary.unpaidCount > 0) return summary.label;
-    if (summary.totalCount === 0) return `${summary.label} -`;
-    if (summary.usableClasses > 0) return `${summary.label} ${summary.usableClasses}`;
-    return `${summary.label} 0`;
-  };
-
-  const getServiceStatusPalette = (summary: ServiceSummary) => {
-    if (summary.unpaidCount > 0) {
+    if (attention.type === 'noCredits') {
       return {
-        background: theme.backgroundElement,
-        border: theme.backgroundSelected,
-        text: theme.text,
-      };
-    }
-
-    if (summary.totalCount > 0 && summary.usableClasses === 0) {
-      return {
-        background: theme.backgroundElement,
-        border: theme.primary,
-        text: theme.primary,
+        label: attention.reason === 'No packages' ? 'No packages' : 'No credits',
+        icon: 'exclamationmark.triangle.fill' as const,
+        color: theme.primary,
       };
     }
 
     return {
-      background: theme.backgroundElement,
-      border: theme.backgroundSelected,
-      text: summary.totalCount > 0 ? theme.text : theme.textSecondary,
+      label: 'Good to go',
+      icon: 'checkmark.circle.fill' as const,
+      color: theme.success,
     };
   };
 
-  const renderServiceStatusPill = (summary: ServiceSummary) => {
-    const palette = getServiceStatusPalette(summary);
-
-    return (
-      <View
-        key={summary.serviceType}
-        style={[
-          styles.serviceStatusPill,
-          { backgroundColor: palette.background, borderColor: palette.border },
-        ]}
-      >
-        <ThemedText numberOfLines={1} style={[styles.serviceStatusPillText, { color: palette.text }]}>
-          {getServiceStatusLabel(summary)}
-        </ThemedText>
-      </View>
-    );
+  const getServiceBalanceLabel = (summary: ServiceSummary) => {
+    if (summary.hasUnlimited) return `${summary.label}: unlimited`;
+    if (summary.totalCount === 0) return `${summary.label}: none`;
+    if (summary.usableClasses > 0) return `${summary.label}: ${summary.usableClasses} left`;
+    return `${summary.label}: 0 usable`;
   };
+
+  const getServiceBalanceSummary = (client: ClientRecord) => (
+    getVisiblePackageSummaries(client).map(getServiceBalanceLabel).join(' · ')
+  );
 
   const renderServiceTile = (summary: ServiceSummary) => {
     const hasPackage = summary.totalCount > 0;
     const palette = getStatusPalette(summary);
-    const value = hasPackage ? (summary.usableClasses > 0 ? `${summary.usableClasses}` : summary.reason) : 'None';
-    const caption = hasPackage && summary.usableClasses > 0 ? 'left' : summary.label;
+    const value = summary.hasUnlimited ? 'Unlimited' : hasPackage ? (summary.usableClasses > 0 ? `${summary.usableClasses}` : summary.reason) : 'None';
+    const caption = summary.hasUnlimited ? summary.label : hasPackage && summary.usableClasses > 0 ? 'left' : summary.label;
 
     return (
       <View key={summary.serviceType} style={styles.serviceTile}>
@@ -506,6 +487,7 @@ export default function ClientsScreen() {
     const pkg = clientPackage.packages;
     const isSaving = savingPackageActionId === clientPackage.id;
     const serviceLabel = pkg ? getServiceLabel(pkg.service_type) : 'Package';
+    const creditLabel = isUnlimitedPackage(pkg) ? 'Unlimited classes' : `${clientPackage.classes_remaining ?? 0} credits`;
 
     return (
       <View key={clientPackage.id} style={[styles.unpaidActionRow, { backgroundColor: theme.background, borderColor: theme.surface }]}>
@@ -517,7 +499,7 @@ export default function ClientsScreen() {
             </View>
           </View>
           <ThemedText themeColor="textSecondary" style={styles.unpaidActionMeta}>
-            {clientPackage.classes_remaining} credits waiting for payment
+            {creditLabel} waiting for payment
           </ThemedText>
         </View>
 
@@ -543,16 +525,18 @@ export default function ClientsScreen() {
   const renderPackageHistoryRow = (clientPackage: ClientPackageRow) => {
     const status = getClientPackageStatus(clientPackage);
     const pkg = clientPackage.packages;
+    const isUnlimited = isUnlimitedPackage(pkg);
     const isUnpaid = isClientPackageUnpaid(clientPackage);
     const isVoided = clientPackage.payment_status === 'voided';
-    const canVoid = isUnpaid && !!pkg && clientPackage.classes_remaining === pkg.total_classes;
-    const canAdjust = status.active && clientPackage.payment_status === 'paid';
+    const canVoid = isUnpaid && !!pkg && (isUnlimited ? clientPackage.classes_remaining === null : clientPackage.classes_remaining === pkg.total_classes);
+    const canAdjust = !isUnlimited && status.active && clientPackage.payment_status === 'paid';
     const isAdjusting = adjustingPackageId === clientPackage.id;
     const isSaving = savingPackageActionId === clientPackage.id;
     const serviceLabel = pkg ? getServiceLabel(pkg.service_type) : 'Package';
     const expirationText = clientPackage.expiration_date
       ? `Expires ${dayjs(clientPackage.expiration_date).format('MMM D, YYYY')}`
       : 'No expiration';
+    const packageBalanceText = isUnlimited ? 'Unlimited classes' : `${clientPackage.classes_remaining ?? 0} left`;
 
     return (
       <View key={clientPackage.id} style={[styles.historyCard, { borderColor: theme.surface, backgroundColor: theme.background }]}>
@@ -565,7 +549,7 @@ export default function ClientsScreen() {
               </View>
             </View>
             <ThemedText themeColor="textSecondary" style={styles.historyMeta}>
-              {clientPackage.classes_remaining} left • {expirationText}
+              {packageBalanceText} • {expirationText}
             </ThemedText>
             <ThemedText style={[styles.historyStatus, { color: isVoided ? theme.textSecondary : status.active ? theme.success : theme.primary }]}>
               {status.reason}
@@ -574,8 +558,8 @@ export default function ClientsScreen() {
 
           <View style={styles.historyActionColumn}>
             <View style={[styles.remainingBadge, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText style={styles.remainingValue}>{clientPackage.classes_remaining}</ThemedText>
-              <ThemedText themeColor="textSecondary" style={styles.remainingLabel}>left</ThemedText>
+              <ThemedText style={styles.remainingValue}>{isUnlimited ? 'All' : clientPackage.classes_remaining ?? 0}</ThemedText>
+              <ThemedText themeColor="textSecondary" style={styles.remainingLabel}>{isUnlimited ? 'classes' : 'left'}</ThemedText>
             </View>
 
             {canAdjust && (
@@ -683,13 +667,8 @@ export default function ClientsScreen() {
         activeOpacity={0.8}
       >
         <ThemedText style={[styles.filterChipText, { color: isSelected ? theme.onControlSelected : theme.text }]}>
-          {label}
+          {label} ({count})
         </ThemedText>
-        <View style={[styles.filterCountPill, { backgroundColor: isSelected ? theme.onControlSelected : theme.background }]}>
-          <ThemedText style={[styles.filterCountText, { color: isSelected ? theme.controlSelected : theme.textSecondary }]}>
-            {count}
-          </ThemedText>
-        </View>
       </TouchableOpacity>
     );
   };
@@ -697,6 +676,8 @@ export default function ClientsScreen() {
   const renderPackageOption = (pkg: PackageRow) => {
     const isSelected = !editingClient && selectedPackage?.id === pkg.id;
     const isAdding = addingPackageId === pkg.id;
+    const classText = isUnlimitedPackage(pkg) ? 'Unlimited classes' : `${pkg.total_classes ?? 0} credits`;
+    const expirationText = pkg.expires_in_weeks ? `${pkg.expires_in_weeks} weeks` : 'No expiration';
 
     return (
       <TouchableOpacity
@@ -715,7 +696,7 @@ export default function ClientsScreen() {
         <View style={styles.packageOptionMain}>
           <ThemedText style={styles.packageOptionTitle}>{pkg.name}</ThemedText>
           <ThemedText themeColor="textSecondary" style={styles.packageOptionMeta}>
-            {pkg.total_classes} credits • {pkg.expires_in_weeks ? `${pkg.expires_in_weeks} weeks` : 'No expiration'}
+            {classText} • {expirationText}
           </ThemedText>
         </View>
 
@@ -738,31 +719,42 @@ export default function ClientsScreen() {
 
   const renderClientCard = ({ item }: { item: ClientRecord }) => {
     const attention = getClientAttention(item);
-    const attentionBadge = getAttentionBadge(attention);
+    const clientStateChip = getClientStateChip(attention);
+    const serviceBalanceSummary = getServiceBalanceSummary(item);
 
     return (
       <TouchableOpacity activeOpacity={0.8} onPress={() => handleClientPress(item)}>
         <ThemedView type="surface" style={styles.clientCard}>
-          <View style={styles.clientCardHeader}>
-            <View style={styles.clientIdentity}>
-              <ThemedText numberOfLines={1} style={styles.clientName}>{item.name}</ThemedText>
+          <View style={styles.clientCardBody}>
+            <View style={[styles.clientAvatar, { backgroundColor: theme.backgroundElement, borderColor: theme.backgroundSelected }]}>
+              <ThemedText style={[styles.clientAvatarText, { color: theme.textSecondary }]}>
+                {getClientInitials(item.name)}
+              </ThemedText>
             </View>
-            {attentionBadge && (
-              <View style={[styles.attentionPill, { backgroundColor: theme.backgroundElement, borderColor: attentionBadge.color }]}>
-                <AppSymbol name={attentionBadge.icon} size={12} tintColor={attentionBadge.color} />
-                <ThemedText numberOfLines={1} style={[styles.attentionPillText, { color: attentionBadge.color }]}>
-                  {attentionBadge.label}
-                </ThemedText>
-              </View>
-            )}
-          </View>
 
-          <View style={styles.clientMetaRow}>
-            <ThemedText numberOfLines={1} themeColor="textSecondary" style={styles.clientPhone}>
-              {formatPhoneNumber(item.phone) || 'No phone added'}
-            </ThemedText>
-            <View style={styles.serviceStatusRow}>
-              {item.packageSummaries.map(renderServiceStatusPill)}
+            <View style={styles.clientCardContent}>
+              <View style={styles.clientCardHeader}>
+                <View style={styles.clientIdentity}>
+                  <ThemedText numberOfLines={1} style={styles.clientName}>{item.name}</ThemedText>
+                  <ThemedText numberOfLines={1} themeColor="textSecondary" style={styles.clientPhone}>
+                    {formatPhoneNumber(item.phone) || 'No phone added'}
+                  </ThemedText>
+                </View>
+
+                <View style={styles.clientAffordance}>
+                  <View style={[styles.clientStatePill, { backgroundColor: theme.backgroundElement, borderColor: clientStateChip.color }]}>
+                    <AppSymbol name={clientStateChip.icon} size={12} tintColor={clientStateChip.color} />
+                    <ThemedText numberOfLines={1} style={[styles.clientStatePillText, { color: clientStateChip.color }]}>
+                      {clientStateChip.label}
+                    </ThemedText>
+                  </View>
+                  <AppSymbol name="chevron.right" size={15} tintColor={theme.textSecondary} />
+                </View>
+              </View>
+
+              <ThemedText numberOfLines={2} themeColor="textSecondary" style={styles.serviceBalanceText}>
+                {serviceBalanceSummary}
+              </ThemedText>
             </View>
           </View>
         </ThemedView>
@@ -775,14 +767,16 @@ export default function ClientsScreen() {
       {[0, 1, 2].map((item) => (
         <ThemedView key={item} type="surface" style={styles.skeletonCard}>
           <View style={styles.skeletonHeaderRow}>
-            <View style={[styles.skeletonLineLarge, { backgroundColor: theme.backgroundElement }]} />
-            <View style={[styles.skeletonBadge, { backgroundColor: theme.backgroundElement }]} />
-          </View>
-          <View style={styles.skeletonMetaRow}>
-            <View style={[styles.skeletonLineSmall, { backgroundColor: theme.backgroundElement }]} />
-            <View style={styles.skeletonStatusRow}>
-              <View style={[styles.skeletonStatusPill, { backgroundColor: theme.backgroundElement }]} />
-              <View style={[styles.skeletonStatusPill, { backgroundColor: theme.backgroundElement }]} />
+            <View style={[styles.skeletonAvatar, { backgroundColor: theme.backgroundElement }]} />
+            <View style={styles.skeletonMetaRow}>
+              <View style={styles.skeletonTitleRow}>
+                <View style={[styles.skeletonLineLarge, { backgroundColor: theme.backgroundElement }]} />
+                <View style={[styles.skeletonBadge, { backgroundColor: theme.backgroundElement }]} />
+              </View>
+              <View style={[styles.skeletonLineSmall, { backgroundColor: theme.backgroundElement }]} />
+              <View style={styles.skeletonStatusRow}>
+                <View style={[styles.skeletonStatusLine, { backgroundColor: theme.backgroundElement }]} />
+              </View>
             </View>
           </View>
         </ThemedView>
@@ -861,13 +855,7 @@ export default function ClientsScreen() {
                 <View style={styles.sheetSummaryHeader}>
                   <View style={styles.sheetSummaryAvatar}>
                     <ThemedText style={[styles.sheetSummaryInitials, { color: theme.onPrimary }]}>
-                      {editingClient.name
-                        .split(' ')
-                        .filter(Boolean)
-                        .slice(0, 2)
-                        .map((part) => part[0])
-                        .join('')
-                        .toUpperCase()}
+                      {getClientInitials(editingClient.name)}
                     </ThemedText>
                   </View>
                   <View style={styles.sheetSummaryText}>
@@ -992,24 +980,24 @@ const styles = StyleSheet.create({
   searchIcon: { marginRight: Spacing.two },
   searchInput: { flex: 1, fontSize: 15, fontWeight: '500', padding: 0 },
   filterBar: { minHeight: 46, paddingHorizontal: Spacing.three, flexDirection: 'row', gap: Spacing.two, alignItems: 'center' },
-  filterChip: { borderWidth: 1, height: 34, maxHeight: 34, borderRadius: 17, paddingLeft: 12, paddingRight: 6, flexDirection: 'row', alignItems: 'center', alignSelf: 'center', gap: 8 },
-  filterChipText: { fontSize: 13, lineHeight: 16, fontWeight: '800' },
-  filterCountPill: { minWidth: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
-  filterCountText: { fontSize: 12, lineHeight: 14, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  filterChip: { borderWidth: 1, height: 34, maxHeight: 34, borderRadius: 17, paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center', alignSelf: 'center' },
+  filterChipText: { fontSize: 13, lineHeight: 16, fontWeight: '800', fontVariant: ['tabular-nums'] },
 
   listContent: { paddingHorizontal: Spacing.three, paddingBottom: 100 },
   clientCard: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8, marginBottom: 7, gap: 6, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
-  clientCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: Spacing.two },
+  clientCardBody: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
+  clientAvatar: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
+  clientAvatarText: { fontSize: 12, lineHeight: 14, fontWeight: '900' },
+  clientCardContent: { flex: 1, minWidth: 0, gap: 7 },
+  clientCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: Spacing.two },
   clientIdentity: { flex: 1, minWidth: 0 },
   clientName: { fontSize: 16, lineHeight: 20, fontWeight: '700' },
   clientPhone: { fontSize: 12, lineHeight: 16, fontWeight: '500' },
-  attentionPill: { flexShrink: 0, maxWidth: 108, minHeight: 24, borderWidth: 1, borderRadius: 12, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 4 },
-  attentionPillText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
+  clientAffordance: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0, paddingTop: 1 },
+  clientStatePill: { flexShrink: 1, maxWidth: 132, minHeight: 24, borderWidth: 1, borderRadius: 12, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  clientStatePillText: { fontSize: 11, lineHeight: 13, fontWeight: '800' },
 
-  clientMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
-  serviceStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 },
-  serviceStatusPill: { height: 23, maxWidth: 86, borderWidth: 1, borderRadius: 12, paddingHorizontal: 7, justifyContent: 'center', alignItems: 'center' },
-  serviceStatusPillText: { fontSize: 11, lineHeight: 13, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  serviceBalanceText: { fontSize: 12, lineHeight: 16, fontWeight: '700', fontVariant: ['tabular-nums'] },
   serviceTile: { flex: 1, minWidth: 112, minHeight: 42, paddingLeft: 10, paddingVertical: 2, justifyContent: 'center', overflow: 'hidden' },
   serviceTileAccent: { position: 'absolute', left: 0, top: 5, bottom: 5, width: 3, borderRadius: 2 },
   serviceTileHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
@@ -1020,13 +1008,15 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: 'center', marginTop: Spacing.five },
   skeletonList: { gap: 8 },
   skeletonCard: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8, gap: 7, borderWidth: 1, borderColor: 'rgba(128,128,128,0.14)' },
-  skeletonHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
-  skeletonMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
-  skeletonLineLarge: { width: '45%', height: 16, borderRadius: 4 },
-  skeletonLineSmall: { width: '30%', height: 12, borderRadius: 4 },
+  skeletonHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.two },
+  skeletonMetaRow: { flex: 1, minWidth: 0, gap: 7 },
+  skeletonTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  skeletonLineLarge: { width: '55%', height: 16, borderRadius: 4 },
+  skeletonLineSmall: { width: '38%', height: 12, borderRadius: 4 },
+  skeletonAvatar: { width: 34, height: 34, borderRadius: 17 },
   skeletonBadge: { width: 64, height: 22, borderRadius: 11 },
-  skeletonStatusRow: { flexDirection: 'row', gap: 6, flexShrink: 0 },
-  skeletonStatusPill: { width: 58, height: 23, borderRadius: 12 },
+  skeletonStatusRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  skeletonStatusLine: { width: '70%', height: 12, borderRadius: 4 },
   fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
 
   sheetScroll: { flex: 1 },

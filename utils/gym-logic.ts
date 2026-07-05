@@ -12,16 +12,17 @@ export type PackageRow = {
   id: number;
   name: string;
   price?: number | string | null;
-  total_classes: number;
+  total_classes: number | null;
   expires_in_weeks: number | null;
   service_type: ServiceType;
+  is_unlimited: boolean;
 };
 
 export type ClientPackageRow = {
   id: number;
   client_id?: number;
   package_id: number;
-  classes_remaining: number;
+  classes_remaining: number | null;
   start_date: string | null;
   expiration_date: string | null;
   payment_status: PaymentStatus;
@@ -37,6 +38,7 @@ export type ServiceSummary = {
   serviceType: ServiceType;
   label: string;
   usableClasses: number;
+  hasUnlimited: boolean;
   activeCount: number;
   totalCount: number;
   unpaidCount: number;
@@ -50,6 +52,10 @@ const normalizePackageName = (name: string) => name.toLowerCase().replace(/[^a-z
 
 export function isFirstClassFreePackage(pkg: Pick<PackageRow, 'name'> | null | undefined): boolean {
   return normalizePackageName(pkg?.name ?? '') === 'firstclassfree';
+}
+
+export function isUnlimitedPackage(pkg: Pick<PackageRow, 'is_unlimited'> | null | undefined): boolean {
+  return !!pkg?.is_unlimited;
 }
 
 export function isClientPackageUnpaid(clientPackage: Pick<ClientPackageRow, 'payment_status' | 'packages'>): boolean {
@@ -71,11 +77,13 @@ export function getServiceLabel(serviceType: ServiceType): string {
 export function getClientPackageStatus(clientPackage: Pick<ClientPackageRow, 'classes_remaining' | 'expiration_date' | 'payment_status' | 'packages'>): PackageStatus {
   if (clientPackage.payment_status === 'voided') return { active: false, reason: 'Voided' };
   if (isClientPackageUnpaid(clientPackage)) return { active: false, reason: 'Unpaid Balance' };
-  if (clientPackage.classes_remaining <= 0) return { active: false, reason: 'Out of Classes' };
 
   if (clientPackage.expiration_date && dayjs().isAfter(dayjs(clientPackage.expiration_date).endOf('day'))) {
     return { active: false, reason: 'Package Expired' };
   }
+
+  if (isUnlimitedPackage(clientPackage.packages)) return { active: true, reason: 'Good to go' };
+  if (clientPackage.classes_remaining === null || clientPackage.classes_remaining <= 0) return { active: false, reason: 'Out of Classes' };
 
   return { active: true, reason: 'Good to go' };
 }
@@ -97,10 +105,14 @@ export function summarizePackagesByService(
   const statusByPackage = matchingPackages.map(getClientPackageStatus);
   const expiredCount = statusByPackage.filter((status) => status.reason === 'Package Expired').length;
   const outOfClassesCount = statusByPackage.filter((status) => status.reason === 'Out of Classes').length;
-  const usableClasses = activePackages.reduce((sum, clientPackage) => sum + clientPackage.classes_remaining, 0);
+  const hasUnlimited = activePackages.some((clientPackage) => isUnlimitedPackage(clientPackage.packages));
+  const usableClasses = activePackages.reduce((sum, clientPackage) => (
+    sum + (isUnlimitedPackage(clientPackage.packages) ? 0 : clientPackage.classes_remaining ?? 0)
+  ), 0);
 
   let reason = `${usableClasses} left`;
   if (unpaidCount > 0) reason = `${unpaidCount} unpaid`;
+  else if (hasUnlimited) reason = 'Unlimited';
   else if (usableClasses === 0 && matchingPackages.length > 0) reason = 'No usable credits';
   else if (matchingPackages.length === 0) reason = 'None';
 
@@ -108,12 +120,13 @@ export function summarizePackagesByService(
     serviceType,
     label: getServiceLabel(serviceType),
     usableClasses,
+    hasUnlimited,
     activeCount: activePackages.length,
     totalCount: matchingPackages.length,
     unpaidCount,
     expiredCount,
     outOfClassesCount,
-    needsAttention: unpaidCount > 0 || (matchingPackages.length > 0 && usableClasses === 0),
+    needsAttention: unpaidCount > 0 || (!hasUnlimited && matchingPackages.length > 0 && usableClasses === 0),
     reason,
   };
 }

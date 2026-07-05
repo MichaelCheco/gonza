@@ -24,9 +24,10 @@ This file serves as the source of truth for the Supabase Postgres database layou
 | `id` | `int8` | Primary Identity |
 | `name` | `text` |  |
 | `price` | `numeric` |  |
-| `total_classes` | `int4` |  |
+| `total_classes` | `int4` | Nullable for unlimited packages |
 | `expires_in_weeks` | `int4` |  Nullable |
 | `service_type` | `text` |  `group` or `personal_training` |
+| `is_unlimited` | `boolean` | Defaults to `false`; when `true`, `total_classes` is `null` |
 
 ## Table `client_packages`
 
@@ -37,7 +38,7 @@ This file serves as the source of truth for the Supabase Postgres database layou
 | `id` | `int8` | Primary Identity |
 | `client_id` | `int8` |  |
 | `package_id` | `int8` |  |
-| `classes_remaining` | `int4` |  |
+| `classes_remaining` | `int4` | Nullable for unlimited packages |
 | `start_date` | `date` |  |
 | `expiration_date` | `date` |  Nullable |
 | `payment_status` | `text` |  |
@@ -109,9 +110,9 @@ Row Level Security is enabled on `clients`, `packages`, `client_packages`, `clas
 
 | Function | Returns | Purpose |
 |----------|---------|---------|
-| `process_check_in(p_class_id bigint, p_client_id bigint)` | `boolean` | Consumes one paid matching package credit and marks attendance checked in. |
-| `add_group_roster_check_in(p_class_id bigint, p_client_id bigint)` | `table` | Adds an existing client to a group roster and consumes one group credit when available, returning row status such as `checked_in`, `last_class`, `no_active_package`, or `already_checked_in`. |
+| `process_check_in(p_class_id bigint, p_client_id bigint)` | `boolean` | Marks attendance checked in with a paid matching package, consuming one credit for finite packages and leaving unlimited packages unchanged. |
+| `add_group_roster_check_in(p_class_id bigint, p_client_id bigint)` | `table` | Adds an existing client to a group roster with a paid group package, consuming one credit for finite packages and leaving unlimited packages unchanged, returning row status such as `checked_in`, `last_class`, `no_active_package`, or `already_checked_in`. |
 | `create_client_and_group_check_in(p_class_id bigint, p_full_name text)` | `table` | Creates a walk-in client, attaches the `First Class Free` group package, and checks them into the group roster. |
-| `undo_check_in(p_class_id bigint, p_client_id bigint)` | `boolean` | Restores one consumed package credit and clears `attendance.client_package_id`. |
-| `cancel_session(p_class_id bigint)` | `boolean` | Restores all checked-in credits for a class, deletes attendance rows, then deletes the class. |
+| `undo_check_in(p_class_id bigint, p_client_id bigint)` | `boolean` | Restores one consumed finite package credit when applicable and clears `attendance.client_package_id`. |
+| `cancel_session(p_class_id bigint)` | `boolean` | Restores checked-in finite package credits for a class, deletes attendance rows, then deletes the class. |
 | `generate_classes_from_templates(p_start_date date, p_end_date date)` | `integer` | Inserts missing scheduled classes from `class_templates` within a date range. |

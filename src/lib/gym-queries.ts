@@ -3,6 +3,7 @@ import dayjs from 'dayjs';
 import {
   ClientPackageRow,
   isFirstClassFreePackage,
+  isUnlimitedPackage,
   PackageRow,
   SERVICE_TYPES,
   ServiceSummary,
@@ -44,6 +45,7 @@ export type RosterItem = {
   checkedIn: boolean;
   clientPackageId: string | null;
   remainingAfter: number | null;
+  isUnlimited: boolean;
   status: RosterStatus;
 };
 
@@ -83,6 +85,10 @@ function getGroupRosterPreview(client: ClientRecord): Pick<ClientOption, 'groupS
     return { groupStatusLabel: 'Unpaid', groupStatusTone: 'attention' };
   }
 
+  if (groupSummary.hasUnlimited) {
+    return { groupStatusLabel: 'Unlimited', groupStatusTone: 'ok' };
+  }
+
   if (groupSummary.usableClasses <= 0) {
     return { groupStatusLabel: 'No active package', groupStatusTone: 'attention' };
   }
@@ -111,7 +117,7 @@ export async function fetchClients(): Promise<ClientRecord[]> {
       id, first_name, last_name, phone,
       client_packages (
         id, client_id, package_id, classes_remaining, start_date, expiration_date, payment_status,
-        packages ( id, name, price, total_classes, expires_in_weeks, service_type )
+        packages ( id, name, price, total_classes, expires_in_weeks, service_type, is_unlimited )
       )
     `)
     .order('first_name', { ascending: true });
@@ -123,7 +129,7 @@ export async function fetchClients(): Promise<ClientRecord[]> {
 export async function fetchPackages(): Promise<PackageRow[]> {
   const { data, error } = await supabase
     .from('packages')
-    .select('id, name, price, total_classes, expires_in_weeks, service_type')
+    .select('id, name, price, total_classes, expires_in_weeks, service_type, is_unlimited')
     .order('service_type', { ascending: true })
     .order('id', { ascending: true });
 
@@ -185,7 +191,7 @@ export async function fetchRoster(classId: string): Promise<RosterItem[]> {
       client_packages (
         id,
         classes_remaining,
-        packages ( id, name, service_type )
+        packages ( id, name, service_type, is_unlimited )
       )
     `)
     .eq('class_id', classId);
@@ -197,12 +203,13 @@ export async function fetchRoster(classId: string): Promise<RosterItem[]> {
     const clientPackageData = attendanceRow.client_packages as any;
     const clientPackage = Array.isArray(clientPackageData) ? clientPackageData[0] : clientPackageData;
     const remainingAfter = typeof clientPackage?.classes_remaining === 'number' ? clientPackage.classes_remaining : null;
+    const isUnlimited = isUnlimitedPackage(clientPackage?.packages);
     const checkedIn = !!attendanceRow.client_package_id;
     let status: RosterStatus = checkedIn ? 'checked_in' : 'no_active_package';
 
     if (checkedIn && isFirstClassFreePackage(clientPackage?.packages)) {
       status = 'first_class';
-    } else if (checkedIn && remainingAfter === 0) {
+    } else if (checkedIn && !isUnlimited && remainingAfter === 0) {
       status = 'last_class';
     }
 
@@ -213,6 +220,7 @@ export async function fetchRoster(classId: string): Promise<RosterItem[]> {
       checkedIn,
       clientPackageId: attendanceRow.client_package_id?.toString() ?? null,
       remainingAfter,
+      isUnlimited,
       status,
     };
   });
