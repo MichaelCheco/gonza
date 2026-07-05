@@ -41,6 +41,24 @@ type AttendanceRow = {
   client_package_id: number | null;
 };
 
+type AvailableSlotItem = {
+  kind: 'available';
+  id: string;
+  time: string;
+  sortTime: number;
+  dateTime: string;
+};
+
+type ScheduledSessionItem = SessionType & {
+  kind: 'session';
+  sortTime: number;
+};
+
+type ScheduleItem = AvailableSlotItem | ScheduledSessionItem;
+
+const AVAILABLE_SLOT_START_HOUR = 6;
+const AVAILABLE_SLOT_END_HOUR = 21;
+
 export default function HomeScreen() {
   const theme = useTheme();
   const { signOut } = useAuth();
@@ -209,6 +227,38 @@ export default function HomeScreen() {
     clients.some((client) => client.name.trim().toLowerCase() === addWalkInNameLower)
   ), [addWalkInNameLower, clients]);
   const canCreateRosterClient = addWalkInName.length > 1 && !hasExactClientMatch;
+  const scheduleItems = useMemo<ScheduleItem[]>(() => {
+    const scheduledItems = classes.map((session) => {
+      const sessionDateTime = dayjs(`${selectedDate} ${session.time}`, 'YYYY-MM-DD h:mm A');
+
+      return {
+        ...session,
+        kind: 'session' as const,
+        sortTime: sessionDateTime.valueOf(),
+      };
+    });
+    const occupiedSlotTimes = new Set(
+      scheduledItems.map((session) => dayjs(session.sortTime).format('HH:mm'))
+    );
+    const availableItems: AvailableSlotItem[] = [];
+
+    for (let hour = AVAILABLE_SLOT_START_HOUR; hour <= AVAILABLE_SLOT_END_HOUR; hour += 1) {
+      const slotDateTime = dayjs(selectedDate).hour(hour).minute(0).second(0).millisecond(0);
+      const slotKey = slotDateTime.format('HH:mm');
+
+      if (!occupiedSlotTimes.has(slotKey)) {
+        availableItems.push({
+          kind: 'available',
+          id: `available-${selectedDate}-${slotKey}`,
+          time: slotDateTime.format('h:mm A'),
+          sortTime: slotDateTime.valueOf(),
+          dateTime: slotDateTime.toISOString(),
+        });
+      }
+    }
+
+    return [...scheduledItems, ...availableItems].sort((a, b) => a.sortTime - b.sortTime);
+  }, [classes, selectedDate]);
 
   const handleSelectedDateChange = (date: string) => {
     setSelectedDate(date);
@@ -338,6 +388,15 @@ export default function HomeScreen() {
     setClientQuery('');
     setSelectedClient(null);
     setSessionTime(new Date());
+    editSheetRef.current?.present();
+  };
+
+  const handleAvailableSlotPress = (slot: AvailableSlotItem) => {
+    setEditingSession(null);
+    setClientQuery('');
+    setSelectedClient(null);
+    setShowTimePicker(false);
+    setSessionTime(dayjs(slot.dateTime).toDate());
     editSheetRef.current?.present();
   };
 
@@ -506,7 +565,38 @@ export default function HomeScreen() {
     return { textColor: theme.warning, backgroundColor: theme.backgroundElement };
   };
 
-  const renderClassItem = ({ item }: { item: SessionType }) => {
+  const renderAvailableSlotItem = (item: AvailableSlotItem) => (
+    <View style={styles.classCardWrapper}>
+      <TouchableOpacity activeOpacity={0.75} onPress={() => handleAvailableSlotPress(item)}>
+        <ThemedView
+          type="surface"
+          style={[
+            styles.classCard,
+            styles.availableCard,
+            { backgroundColor: theme.background, borderColor: theme.backgroundElement },
+          ]}
+        >
+          <View style={[styles.timeContainer, { borderRightColor: theme.backgroundElement }]}>
+            <ThemedText numberOfLines={1} style={[styles.timeText, { color: theme.textSecondary }]}>{item.time}</ThemedText>
+          </View>
+          <View style={styles.detailsContainer}>
+            <ThemedText style={[styles.classTitle, { color: theme.success }]}>Available</ThemedText>
+            <ThemedText themeColor="textSecondary" type="small">Tap to book PT</ThemedText>
+          </View>
+          <View style={styles.cardActionContainer}>
+            <View
+              style={[styles.availableActionBadge, { backgroundColor: theme.backgroundElement }]}
+              accessibilityLabel="Book available slot"
+            >
+              <AppSymbol name="plus" size={14} tintColor={theme.success} weight="bold" />
+            </View>
+          </View>
+        </ThemedView>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderClassItem = (item: SessionType) => {
     const isPT = item.type !== 'Group';
     const checkInState = ptCheckInStates[item.id];
     const isCheckingIn = checkInState?.status === 'loading';
@@ -571,6 +661,10 @@ export default function HomeScreen() {
     );
   };
 
+  const renderScheduleItem = ({ item }: { item: ScheduleItem }) => (
+    item.kind === 'available' ? renderAvailableSlotItem(item) : renderClassItem(item)
+  );
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
@@ -608,9 +702,9 @@ export default function HomeScreen() {
         <View style={styles.listContainer}>
           <ThemedText style={styles.listHeader}>{dayjs(selectedDate).format('dddd, MMMM D')}</ThemedText>
           <FlatList
-            data={classes}
-            keyExtractor={(item) => item.id}
-            renderItem={renderClassItem}
+            data={loading ? [] : scheduleItems}
+            keyExtractor={(item) => `${item.kind}-${item.id}`}
+            renderItem={renderScheduleItem}
             contentContainerStyle={styles.flatListContent}
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
@@ -824,6 +918,7 @@ const styles = StyleSheet.create({
 
   classCardWrapper: { marginBottom: Spacing.two },
   classCard: { flexDirection: 'row', borderRadius: Spacing.two, padding: 12, alignItems: 'center' },
+  availableCard: { borderWidth: 1 },
   timeContainer: { width: 80, minWidth: 80, borderRightWidth: 1, marginRight: Spacing.three },
   timeText: { fontSize: 15, fontWeight: '700' },
   detailsContainer: { flex: 1 },
@@ -837,6 +932,7 @@ const styles = StyleSheet.create({
   inlineCheckInText: { fontWeight: '600', fontSize: 13 },
   inlineCheckInError: { maxWidth: 110, marginTop: 4, fontSize: 11, fontWeight: '700', textAlign: 'right' },
   rosterChevron: { flexDirection: 'row', alignItems: 'center' },
+  availableActionBadge: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   swipeAction: { justifyContent: 'center', alignItems: 'center', width: 70, borderRadius: Spacing.two },
 
   fab: { position: 'absolute', bottom: Spacing.four, right: Spacing.four, width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 },
