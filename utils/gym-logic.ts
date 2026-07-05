@@ -48,10 +48,38 @@ export type ServiceSummary = {
   reason: string;
 };
 
+export type IntroPromoKind = 'group_first_class' | 'pt_first_session';
+
 const normalizePackageName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 export function isFirstClassFreePackage(pkg: Pick<PackageRow, 'name'> | null | undefined): boolean {
   return normalizePackageName(pkg?.name ?? '') === 'firstclassfree';
+}
+
+export function getIntroPromoKind(pkg: Pick<PackageRow, 'name'> | null | undefined): IntroPromoKind | null {
+  const normalizedName = normalizePackageName(pkg?.name ?? '');
+
+  if (normalizedName === 'firstclassfree') return 'group_first_class';
+  if (normalizedName === 'firstptpromo') return 'pt_first_session';
+
+  return null;
+}
+
+export function isIntroPromoPackage(pkg: Pick<PackageRow, 'name'> | null | undefined): boolean {
+  return getIntroPromoKind(pkg) !== null;
+}
+
+export function hasClientReceivedIntroPromo(
+  clientPackages: Pick<ClientPackageRow, 'payment_status' | 'packages'>[],
+  pkg: Pick<PackageRow, 'name'> | null | undefined
+): boolean {
+  const promoKind = getIntroPromoKind(pkg);
+  if (!promoKind) return false;
+
+  return clientPackages.some((clientPackage) => (
+    clientPackage.payment_status !== 'voided' &&
+    getIntroPromoKind(clientPackage.packages) === promoKind
+  ));
 }
 
 export function isUnlimitedPackage(pkg: Pick<PackageRow, 'is_unlimited'> | null | undefined): boolean {

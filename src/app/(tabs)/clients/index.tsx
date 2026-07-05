@@ -7,8 +7,10 @@ import {
   ClientPackageRow,
   getClientPackageStatus,
   getServiceLabel,
+  hasClientReceivedIntroPromo,
   isClientPackageUnpaid,
   isFirstClassFreePackage,
+  isIntroPromoPackage,
   isUnlimitedPackage,
   PackageRow,
   SERVICE_TYPES,
@@ -183,17 +185,25 @@ export default function ClientsScreen() {
     });
   }, [activeFilter, searchQuery, clients, getClientAttention]);
 
+  const availablePackages = useMemo(() => {
+    if (!editingClient) return packages;
+
+    return packages.filter((pkg) => (
+      !isIntroPromoPackage(pkg) ||
+      !hasClientReceivedIntroPromo(editingClient.client_packages, pkg)
+    ));
+  }, [editingClient, packages]);
   const packagesByService = useMemo(() => {
     return SERVICE_ORDER.map((serviceType) => ({
       serviceType,
       label: getServiceLabel(serviceType),
-      packages: packages.filter((pkg) => pkg.service_type === serviceType),
+      packages: availablePackages.filter((pkg) => pkg.service_type === serviceType),
     }));
-  }, [packages]);
+  }, [availablePackages]);
 
   const selectedPackage = useMemo(() => {
-    return packages.find((pkg) => pkg.id === selectedPackageId) ?? packages[0] ?? null;
-  }, [packages, selectedPackageId]);
+    return availablePackages.find((pkg) => pkg.id === selectedPackageId) ?? availablePackages[0] ?? null;
+  }, [availablePackages, selectedPackageId]);
   const unpaidClientPackages = useMemo(() => {
     return editingClient?.client_packages.filter(isClientPackageUnpaid) ?? [];
   }, [editingClient]);
@@ -280,6 +290,11 @@ export default function ClientsScreen() {
     const packageToAdd = packageOverride ?? selectedPackage;
     if (!editingClient || !packageToAdd) return;
     if (addingPackageId !== null) return;
+
+    if (isIntroPromoPackage(packageToAdd) && hasClientReceivedIntroPromo(editingClient.client_packages, packageToAdd)) {
+      Alert.alert('Promo Already Used', `${packageToAdd.name} can only be used once per client.`);
+      return;
+    }
 
     setAddingPackageId(packageToAdd.id);
     const { error } = await supabase.from('client_packages').insert(buildClientPackageInsert(editingClient.id, packageToAdd));
