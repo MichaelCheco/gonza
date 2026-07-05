@@ -59,6 +59,33 @@ type ScheduleItem = AvailableSlotItem | ScheduledSessionItem;
 const AVAILABLE_SLOT_START_HOUR = 6;
 const AVAILABLE_SLOT_END_HOUR = 21;
 
+const getSessionDateTime = (selectedDate: string, time: string) => (
+  dayjs(`${selectedDate} ${time}`, 'YYYY-MM-DD h:mm A')
+);
+
+const getDefaultPTSessionTime = (selectedDate: string, sessions: SessionType[]) => {
+  const today = dayjs();
+  const selectedDay = dayjs(selectedDate);
+  const dayStartSlot = selectedDay.hour(AVAILABLE_SLOT_START_HOUR).minute(0).second(0).millisecond(0);
+  const nextHourSlot = today.add(1, 'hour').startOf('hour');
+  const firstCandidate = selectedDay.isSame(today, 'day') && nextHourSlot.isAfter(dayStartSlot)
+    ? nextHourSlot
+    : dayStartSlot;
+  const occupiedSlotTimes = new Set(
+    sessions.map((session) => getSessionDateTime(selectedDate, session.time).format('HH:mm'))
+  );
+
+  for (let hour = firstCandidate.hour(); hour <= AVAILABLE_SLOT_END_HOUR; hour += 1) {
+    const slotDateTime = selectedDay.hour(hour).minute(0).second(0).millisecond(0);
+
+    if (!occupiedSlotTimes.has(slotDateTime.format('HH:mm'))) {
+      return slotDateTime.toDate();
+    }
+  }
+
+  return firstCandidate.toDate();
+};
+
 export default function HomeScreen() {
   const theme = useTheme();
   const { signOut } = useAuth();
@@ -229,7 +256,7 @@ export default function HomeScreen() {
   const canCreateRosterClient = addWalkInName.length > 1 && !hasExactClientMatch;
   const scheduleItems = useMemo<ScheduleItem[]>(() => {
     const scheduledItems = classes.map((session) => {
-      const sessionDateTime = dayjs(`${selectedDate} ${session.time}`, 'YYYY-MM-DD h:mm A');
+      const sessionDateTime = getSessionDateTime(selectedDate, session.time);
 
       return {
         ...session,
@@ -387,7 +414,8 @@ export default function HomeScreen() {
     setEditingSession(null);
     setClientQuery('');
     setSelectedClient(null);
-    setSessionTime(new Date());
+    setShowTimePicker(false);
+    setSessionTime(getDefaultPTSessionTime(selectedDate, classes));
     editSheetRef.current?.present();
   };
 
@@ -414,7 +442,7 @@ export default function HomeScreen() {
     setClientQuery(session.title);
     const clientMatch = clients.find(c => c.id === session.clientId);
     setSelectedClient(clientMatch ?? null);
-    setSessionTime(dayjs(`${selectedDate} ${session.time}`, 'YYYY-MM-DD h:mm A').toDate());
+    setSessionTime(getSessionDateTime(selectedDate, session.time).toDate());
     editSheetRef.current?.present();
   };
 
