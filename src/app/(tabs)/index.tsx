@@ -512,6 +512,7 @@ export default function HomeScreen() {
     const isCheckingIn = checkInState?.status === 'loading';
     const isCheckedIn = item.checkedIn || checkInState?.status === 'success';
     const checkInError = checkInState?.status === 'error' ? checkInState.message : undefined;
+    const sessionSubtitle = isPT ? item.type : null;
 
     return (
       <View style={styles.classCardWrapper}>
@@ -519,11 +520,13 @@ export default function HomeScreen() {
           <TouchableOpacity activeOpacity={0.8} onPress={() => handleCardPress(item)} onLongPress={isPT ? () => handleLongPressEdit(item) : undefined}>
             <ThemedView type="surface" style={styles.classCard}>
               <View style={[styles.timeContainer, { borderRightColor: theme.textSecondary }]}>
-                <ThemedText style={styles.timeText}>{item.time}</ThemedText>
+                <ThemedText numberOfLines={1} style={styles.timeText}>{item.time}</ThemedText>
               </View>
               <View style={styles.detailsContainer}>
                 <ThemedText style={styles.classTitle}>{item.title}</ThemedText>
-                <ThemedText themeColor="textSecondary" type="small">{item.type}</ThemedText>
+                {sessionSubtitle && (
+                  <ThemedText themeColor="textSecondary" type="small">{sessionSubtitle}</ThemedText>
+                )}
               </View>
               <View style={[styles.cardActionContainer, isPT && isCheckedIn && styles.cardActionContainerBadge]}>
                 {isPT ? (
@@ -821,7 +824,7 @@ const styles = StyleSheet.create({
 
   classCardWrapper: { marginBottom: Spacing.two },
   classCard: { flexDirection: 'row', borderRadius: Spacing.two, padding: 12, alignItems: 'center' },
-  timeContainer: { width: 70, borderRightWidth: 1, marginRight: Spacing.three },
+  timeContainer: { width: 80, minWidth: 80, borderRightWidth: 1, marginRight: Spacing.three },
   timeText: { fontSize: 15, fontWeight: '700' },
   detailsContainer: { flex: 1 },
   classTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
