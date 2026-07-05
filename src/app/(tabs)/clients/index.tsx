@@ -412,8 +412,6 @@ export default function ClientsScreen() {
       return;
     }
 
-    if (!selectedPackage) return Alert.alert('Error', 'Please select a package.');
-
     const { data: newClient, error: clientErr } = await supabase
       .from('clients')
       .insert({ first_name: firstName, last_name: lastName, phone: formattedPhone || null, instagram_handle: normalizedInstagramHandle })
@@ -422,15 +420,9 @@ export default function ClientsScreen() {
 
     if (clientErr) return Alert.alert('Error', clientErr.message);
 
-    const { error: pkgErr } = await supabase
-      .from('client_packages')
-      .insert(buildClientPackageInsert(newClient.id, selectedPackage));
-
-    if (pkgErr) Alert.alert('Error', pkgErr.message);
-    else {
-      await refreshClients();
-      closeBottomSheet();
-    }
+    await refreshClients();
+    setEditingClientId(newClient.id);
+    setSelectedPackageId(packages[0]?.id ?? null);
   };
 
   const getStatusPalette = (summary: ServiceSummary) => {
@@ -994,26 +986,26 @@ export default function ClientsScreen() {
               </View>
             )}
 
-            <View style={styles.section}>
-              <ThemedText themeColor="textSecondary" style={styles.inputLabel}>
-                {editingClient ? 'Add Package' : 'Initial Package'}
-              </ThemedText>
-              <View style={styles.packageGroupStack}>
-                {packagesByService.map((group) => (
-                  <View key={group.serviceType} style={styles.packageGroup}>
-                    <View style={styles.packageGroupHeader}>
-                      <ThemedText style={styles.packageGroupTitle}>{group.label} Packages</ThemedText>
-                      <ThemedText themeColor="textSecondary" style={styles.packageGroupCount}>
-                        {group.packages.length}
-                      </ThemedText>
+            {editingClient && (
+              <View style={styles.section}>
+                <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Add Package</ThemedText>
+                <View style={styles.packageGroupStack}>
+                  {packagesByService.map((group) => (
+                    <View key={group.serviceType} style={styles.packageGroup}>
+                      <View style={styles.packageGroupHeader}>
+                        <ThemedText style={styles.packageGroupTitle}>{group.label} Packages</ThemedText>
+                        <ThemedText themeColor="textSecondary" style={styles.packageGroupCount}>
+                          {group.packages.length}
+                        </ThemedText>
+                      </View>
+                      <View style={styles.packageOptionStack}>
+                        {group.packages.map(renderPackageOption)}
+                      </View>
                     </View>
-                    <View style={styles.packageOptionStack}>
-                      {group.packages.map(renderPackageOption)}
-                    </View>
-                  </View>
-                ))}
+                  ))}
+                </View>
               </View>
-            </View>
+            )}
 
             {editingClient && (
               <View style={styles.section}>
