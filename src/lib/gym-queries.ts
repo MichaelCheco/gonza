@@ -23,6 +23,18 @@ export type ClientRecord = {
   packageSummaries: ServiceSummary[];
 };
 
+export type ClientClassHistoryRecord = {
+  id: string;
+  classId: string;
+  clientPackageId: string;
+  title: string;
+  classType: string;
+  scheduledDate: string;
+  startTime: string;
+  packageName: string;
+  serviceType: string | null;
+};
+
 export type ClientOption = {
   id: string;
   name: string;
@@ -60,6 +72,8 @@ export const gymQueryKeys = {
   packages: ['gym', 'packages'] as const,
   classes: ['gym', 'classes'] as const,
   classesByDate: (date: string) => ['gym', 'classes', date] as const,
+  clientClassHistories: ['gym', 'client-class-history'] as const,
+  clientClassHistory: (clientId: string | number | null | undefined) => ['gym', 'client-class-history', clientId?.toString() ?? 'none'] as const,
   rosters: ['gym', 'rosters'] as const,
   roster: (classId: string | null | undefined) => ['gym', 'rosters', classId ?? 'none'] as const,
 };
@@ -125,6 +139,50 @@ export async function fetchClients(): Promise<ClientRecord[]> {
 
   if (error) throw error;
   return (data ?? []).map(decorateClient);
+}
+
+export async function fetchClientClassHistory(clientId: string | number): Promise<ClientClassHistoryRecord[]> {
+  const { data, error } = await supabase
+    .from('attendance')
+    .select(`
+      id,
+      class_id,
+      client_package_id,
+      classes ( id, title, class_type, scheduled_date, start_time ),
+      client_packages (
+        id,
+        packages ( id, name, service_type )
+      )
+    `)
+    .eq('client_id', clientId)
+    .not('client_package_id', 'is', null);
+
+  if (error) throw error;
+
+  return (data ?? [])
+    .map((attendanceRow) => {
+      const classData = Array.isArray(attendanceRow.classes) ? attendanceRow.classes[0] : attendanceRow.classes;
+      const clientPackageData = Array.isArray(attendanceRow.client_packages) ? attendanceRow.client_packages[0] : attendanceRow.client_packages;
+      const packageData = Array.isArray(clientPackageData?.packages) ? clientPackageData?.packages[0] : clientPackageData?.packages;
+
+      return {
+        id: attendanceRow.id.toString(),
+        classId: attendanceRow.class_id.toString(),
+        clientPackageId: attendanceRow.client_package_id!.toString(),
+        title: classData?.title ?? 'Class',
+        classType: classData?.class_type ?? 'Class',
+        scheduledDate: classData?.scheduled_date ?? '',
+        startTime: classData?.start_time ?? '',
+        packageName: packageData?.name ?? 'Unknown package',
+        serviceType: packageData?.service_type ?? null,
+      };
+    })
+    .sort((a, b) => {
+      const aTime = dayjs(`${a.scheduledDate}T${a.startTime}`).valueOf();
+      const bTime = dayjs(`${b.scheduledDate}T${b.startTime}`).valueOf();
+
+      return bTime - aTime;
+    });
 }
 
 export async function fetchPackages(): Promise<PackageRow[]> {

@@ -24,16 +24,23 @@ export function useGymRealtimeInvalidation(queryClient: QueryClient, enabled: bo
           if (table === 'packages') {
             queryClient.invalidateQueries({ queryKey: gymQueryKeys.packages });
             queryClient.invalidateQueries({ queryKey: gymQueryKeys.clients });
+            queryClient.invalidateQueries({ queryKey: gymQueryKeys.clientClassHistories });
           }
 
           if (table === 'classes') {
             queryClient.invalidateQueries({ queryKey: gymQueryKeys.classes });
+            queryClient.invalidateQueries({ queryKey: gymQueryKeys.clientClassHistories });
           }
 
           if (table === 'attendance') {
             queryClient.invalidateQueries({ queryKey: gymQueryKeys.classes });
             queryClient.invalidateQueries({ queryKey: gymQueryKeys.rosters });
             queryClient.invalidateQueries({ queryKey: gymQueryKeys.clients });
+            queryClient.invalidateQueries({ queryKey: gymQueryKeys.clientClassHistories });
+          }
+
+          if (table === 'client_packages') {
+            queryClient.invalidateQueries({ queryKey: gymQueryKeys.clientClassHistories });
           }
         }
       );

@@ -17,7 +17,7 @@ import {
 import { BottomSheetBackdrop, BottomSheetModal, BottomSheetScrollView, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import dayjs from 'dayjs';
 import * as Clipboard from 'expo-clipboard';
-import { useFocusEffect } from 'expo-router';
+import { type Href, useFocusEffect, useRouter } from 'expo-router';
 import { AppSymbol } from '@/components/app-symbol';
 import { ClientRecord, fetchClients, fetchPackages, gymQueryKeys } from '@/lib/gym-queries';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -63,6 +63,7 @@ const getClientInitials = (name: string) => {
 export default function ClientsScreen() {
   const theme = useTheme();
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ClientFilter>('all');
@@ -246,6 +247,13 @@ export default function ClientsScreen() {
   };
 
   const closeBottomSheet = () => bottomSheetModalRef.current?.dismiss();
+
+  const handleViewClassHistory = () => {
+    if (!editingClient) return;
+
+    closeBottomSheet();
+    router.push(`/clients/${editingClient.id}` as Href);
+  };
 
   const refreshClients = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: gymQueryKeys.clients });
@@ -896,6 +904,18 @@ export default function ClientsScreen() {
                     </View>
                   </View>
                 )}
+
+                <TouchableOpacity
+                  style={[styles.historyLinkButton, { backgroundColor: theme.backgroundElement, borderColor: theme.surface }]}
+                  onPress={handleViewClassHistory}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.historyLinkLabel}>
+                    <AppSymbol name="clock.arrow.circlepath" size={17} tintColor={theme.text} />
+                    <ThemedText style={styles.historyLinkText}>Class History</ThemedText>
+                  </View>
+                  <AppSymbol name="chevron.right" size={15} tintColor={theme.textSecondary} />
+                </TouchableOpacity>
               </View>
             )}
 
@@ -1063,6 +1083,9 @@ const styles = StyleSheet.create({
   sheetSummaryStatusRow: { flexDirection: 'row', alignItems: 'center' },
   statusPill: { borderWidth: 1, borderRadius: 15, minHeight: 30, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
   statusPillText: { fontSize: 12, fontWeight: '700' },
+  historyLinkButton: { borderWidth: 1, borderRadius: 8, minHeight: 44, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  historyLinkLabel: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  historyLinkText: { fontSize: 14, lineHeight: 18, fontWeight: '900' },
   inputLabelRow: { minHeight: 30, marginBottom: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   inputLabel: { fontWeight: '600', marginBottom: 6, fontSize: 13 },
   inputLabelInline: { marginBottom: 0 },
