@@ -595,21 +595,23 @@ export default function HomeScreen() {
 
   const renderAvailableSlotItem = (item: AvailableSlotItem) => (
     <View style={styles.classCardWrapper}>
-      <TouchableOpacity activeOpacity={0.75} onPress={() => handleAvailableSlotPress(item)}>
+      <TouchableOpacity
+        activeOpacity={0.75}
+        onPress={() => handleAvailableSlotPress(item)}
+        accessibilityLabel={`Book available slot at ${item.time}`}
+      >
         <ThemedView
           type="surface"
           style={[
             styles.classCard,
             styles.availableCard,
-            { backgroundColor: theme.background, borderColor: theme.backgroundElement },
+            { backgroundColor: theme.background, borderColor: theme.surface },
           ]}
         >
           <View style={[styles.timeContainer, { borderRightColor: theme.backgroundElement }]}>
-            <ThemedText numberOfLines={1} style={[styles.timeText, { color: theme.textSecondary }]}>{item.time}</ThemedText>
+            <ThemedText numberOfLines={1} style={[styles.timeText, { color: theme.success }]}>{item.time}</ThemedText>
           </View>
-          <View style={styles.detailsContainer}>
-            <ThemedText style={[styles.classTitle, { color: theme.success }]}>Available</ThemedText>
-          </View>
+          <View style={styles.detailsContainer} />
         </ThemedView>
       </TouchableOpacity>
     </View>
