@@ -16,6 +16,7 @@ export type PackageRow = {
   expires_in_weeks: number | null;
   service_type: ServiceType;
   is_unlimited: boolean;
+  package_kind?: 'membership' | 'class_pack' | 'drop_in' | 'promotion';
 };
 
 export type ClientPackageRow = {

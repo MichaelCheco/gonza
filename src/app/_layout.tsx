@@ -23,7 +23,7 @@ function LoadingGate() {
 
 function RootLayoutNav() {
   const scheme = useColorScheme();
-  const { status } = useAuth();
+  const { role, status } = useAuth();
 
   useEffect(() => {
     registerQueryFocusManager();
@@ -31,7 +31,7 @@ function RootLayoutNav() {
 
   useGymRealtimeInvalidation(queryClient, status === 'authorized');
 
-  if (status === 'loading' || status === 'checkingAdmin') {
+  if (status === 'loading' || status === 'checkingAccess') {
     return <LoadingGate />;
   }
 
@@ -42,8 +42,11 @@ function RootLayoutNav() {
           <Stack.Protected guard={status !== 'authorized'}>
             <Stack.Screen name="(auth)" />
           </Stack.Protected>
-          <Stack.Protected guard={status === 'authorized'}>
+          <Stack.Protected guard={status === 'authorized' && role === 'admin'}>
             <Stack.Screen name="(tabs)" />
+          </Stack.Protected>
+          <Stack.Protected guard={status === 'authorized' && role === 'client'}>
+            <Stack.Screen name="(client)" />
           </Stack.Protected>
         </Stack>
       </BottomSheetModalProvider>

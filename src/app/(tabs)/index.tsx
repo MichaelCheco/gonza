@@ -17,9 +17,12 @@ import { useTheme } from '@/hooks/use-theme';
 import {
   ClientOption,
   fetchClassesByDate,
+  fetchCoachAvailabilityByDate,
   fetchClients,
   fetchRoster,
   gymQueryKeys,
+  publishCoachAvailability,
+  removeCoachAvailability,
   RosterItem,
   SessionType,
   toClientOption,
@@ -39,6 +42,8 @@ type AttendanceRow = {
   id: number;
   client_id: number;
   client_package_id: number | null;
+  booking_id: number | null;
+  checked_in_at: string | null;
 };
 
 type AvailableSlotItem = {
@@ -47,6 +52,8 @@ type AvailableSlotItem = {
   time: string;
   sortTime: number;
   dateTime: string;
+  availabilityId: string | null;
+  published: boolean;
 };
 
 type ScheduledSessionItem = SessionType & {
@@ -88,7 +95,7 @@ const getDefaultPTSessionTime = (selectedDate: string, sessions: SessionType[]) 
 
 export default function HomeScreen() {
   const theme = useTheme();
-  const { signOut } = useAuth();
+  const { session, signOut } = useAuth();
   const queryClient = useQueryClient();
   const todayString = dayjs().format('YYYY-MM-DD');
   const [selectedDate, setSelectedDate] = useState(todayString);
@@ -107,6 +114,7 @@ export default function HomeScreen() {
   const [ptCheckInStates, setPtCheckInStates] = useState<Record<string, CheckInState>>({});
 
   const [editingSession, setEditingSession] = useState<SessionType | null>(null);
+  const [selectedAvailabilityId, setSelectedAvailabilityId] = useState<string | null>(null);
   const [selectedGroupClass, setSelectedGroupClass] = useState<SessionType | null>(null);
 
   const [clientQuery, setClientQuery] = useState('');
@@ -131,6 +139,14 @@ export default function HomeScreen() {
   } = useQuery({
     queryKey: gymQueryKeys.classesByDate(selectedDate),
     queryFn: () => fetchClassesByDate(selectedDate),
+  });
+  const {
+    data: coachAvailability = [],
+    error: coachAvailabilityError,
+    refetch: refetchCoachAvailability,
+  } = useQuery({
+    queryKey: gymQueryKeys.coachAvailabilityByDate(selectedDate),
+    queryFn: () => fetchCoachAvailabilityByDate(selectedDate),
   });
   const {
     data: rosterData = [],
@@ -159,6 +175,7 @@ export default function HomeScreen() {
       queryClient.invalidateQueries({ queryKey: gymQueryKeys.classesByDate(selectedDate) }),
       classId ? queryClient.invalidateQueries({ queryKey: gymQueryKeys.roster(classId) }) : Promise.resolve(),
       queryClient.invalidateQueries({ queryKey: gymQueryKeys.clients }),
+      queryClient.invalidateQueries({ queryKey: gymQueryKeys.coachAvailabilityByDate(selectedDate) }),
     ]);
   }, [queryClient, selectedDate]);
 
@@ -171,6 +188,10 @@ export default function HomeScreen() {
   }, [classesError]);
 
   useEffect(() => {
+    if (coachAvailabilityError) Alert.alert('Error fetching PT availability', coachAvailabilityError.message);
+  }, [coachAvailabilityError]);
+
+  useEffect(() => {
     if (rosterError) Alert.alert('Error fetching roster', rosterError.message);
   }, [rosterError]);
 
@@ -178,8 +199,9 @@ export default function HomeScreen() {
     useCallback(() => {
       refetchClients();
       refetchClasses();
+      refetchCoachAvailability();
       if (selectedGroupClassId) refetchRoster();
-    }, [refetchClasses, refetchClients, refetchRoster, selectedGroupClassId])
+    }, [refetchClasses, refetchClients, refetchCoachAvailability, refetchRoster, selectedGroupClassId])
   );
 
   // --- Add Walk-in to Roster ---
@@ -202,6 +224,24 @@ export default function HomeScreen() {
       Keyboard.dismiss();
       await refreshScheduleState(selectedGroupClass.id);
     }
+  };
+
+  const handleReservationCheckIn = async (rosterItem: RosterItem) => {
+    if (!selectedGroupClass || rosterActionClientId) return;
+
+    setRosterActionClientId(rosterItem.clientId);
+    const { error } = await supabase.rpc('add_group_roster_check_in', {
+      p_class_id: parseInt(selectedGroupClass.id, 10),
+      p_client_id: parseInt(rosterItem.clientId, 10),
+    });
+    setRosterActionClientId(null);
+
+    if (error) {
+      Alert.alert('Check-In Failed', error.message);
+      return;
+    }
+
+    await refreshScheduleState(selectedGroupClass.id);
   };
 
   const handleCreateWalkIn = async () => {
@@ -267,6 +307,9 @@ export default function HomeScreen() {
     const occupiedSlotTimes = new Set(
       scheduledItems.map((session) => dayjs(session.sortTime).format('HH:mm'))
     );
+    const publishedAvailabilityByTime = new Map(
+      coachAvailability.map((slot) => [dayjs(slot.startsAt).format('HH:mm'), slot])
+    );
     const availableItems: AvailableSlotItem[] = [];
 
     for (let hour = AVAILABLE_SLOT_START_HOUR; hour <= AVAILABLE_SLOT_END_HOUR; hour += 1) {
@@ -274,18 +317,21 @@ export default function HomeScreen() {
       const slotKey = slotDateTime.format('HH:mm');
 
       if (!occupiedSlotTimes.has(slotKey)) {
+        const publishedSlot = publishedAvailabilityByTime.get(slotKey);
         availableItems.push({
           kind: 'available',
           id: `available-${selectedDate}-${slotKey}`,
           time: slotDateTime.format('h:mm A'),
           sortTime: slotDateTime.valueOf(),
           dateTime: slotDateTime.toISOString(),
+          availabilityId: publishedSlot?.id ?? null,
+          published: !!publishedSlot,
         });
       }
     }
 
     return [...scheduledItems, ...availableItems].sort((a, b) => a.sortTime - b.sortTime);
-  }, [classes, selectedDate]);
+  }, [classes, coachAvailability, selectedDate]);
 
   const handleSelectedDateChange = (date: string) => {
     setSelectedDate(date);
@@ -412,6 +458,7 @@ export default function HomeScreen() {
 
   const handleAddSession = () => {
     setEditingSession(null);
+    setSelectedAvailabilityId(null);
     setClientQuery('');
     setSelectedClient(null);
     setShowTimePicker(false);
@@ -421,11 +468,56 @@ export default function HomeScreen() {
 
   const handleAvailableSlotPress = (slot: AvailableSlotItem) => {
     setEditingSession(null);
+    setSelectedAvailabilityId(slot.availabilityId);
     setClientQuery('');
     setSelectedClient(null);
     setShowTimePicker(false);
     setSessionTime(dayjs(slot.dateTime).toDate());
     editSheetRef.current?.present();
+  };
+
+  const handleAvailabilityLongPress = (slot: AvailableSlotItem) => {
+    if (!session?.user.id) return;
+
+    if (dayjs(slot.dateTime).isBefore(dayjs())) {
+      Alert.alert('Past Time', 'Only future times can be published for client booking.');
+      return;
+    }
+
+    if (slot.published && slot.availabilityId) {
+      Alert.alert('Remove Client Availability?', `${slot.time} will no longer appear as a bookable PT slot.`, [
+        { text: 'Keep Published', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await removeCoachAvailability(slot.availabilityId!);
+              await queryClient.invalidateQueries({ queryKey: gymQueryKeys.coachAvailabilityByDate(selectedDate) });
+            } catch (error) {
+              Alert.alert('Availability Not Removed', error instanceof Error ? error.message : 'Please try again.');
+            }
+          },
+        },
+      ]);
+      return;
+    }
+
+    Alert.alert('Publish PT Availability?', `Clients will be able to book ${slot.time} as a 1-on-1 session.`, [
+      { text: 'Not Now', style: 'cancel' },
+      {
+        text: 'Publish',
+        onPress: async () => {
+          try {
+            const startsAt = dayjs(slot.dateTime);
+            await publishCoachAvailability(session.user.id, startsAt.toISOString(), startsAt.add(1, 'hour').toISOString());
+            await queryClient.invalidateQueries({ queryKey: gymQueryKeys.coachAvailabilityByDate(selectedDate) });
+          } catch (error) {
+            Alert.alert('Availability Not Published', error instanceof Error ? error.message : 'Please try again.');
+          }
+        },
+      },
+    ]);
   };
 
   const handleSignOut = () => {
@@ -439,6 +531,7 @@ export default function HomeScreen() {
     if (session.type !== 'Personal Training') return;
 
     setEditingSession(session);
+    setSelectedAvailabilityId(null);
     setClientQuery(session.title);
     const clientMatch = clients.find(c => c.id === session.clientId);
     setSelectedClient(clientMatch ?? null);
@@ -461,6 +554,9 @@ export default function HomeScreen() {
       class_type: 'Personal Training',
       scheduled_date: selectedDate,
       start_time: timeString,
+      duration_minutes: 60,
+      capacity: 1,
+      is_client_bookable: false,
     };
 
     if (editingSession) {
@@ -470,7 +566,7 @@ export default function HomeScreen() {
 
       const { data: attendanceRows, error: attendanceError } = await supabase
         .from('attendance')
-        .select('id, client_id, client_package_id')
+        .select('id, client_id, client_package_id, booking_id, checked_in_at')
         .eq('class_id', editingSession.id);
 
       if (attendanceError) {
@@ -478,8 +574,13 @@ export default function HomeScreen() {
       }
 
       const rows = (attendanceRows ?? []) as AttendanceRow[];
-      const hasCheckedInAttendance = rows.some((row) => !!row.client_package_id);
+      const hasClientBooking = rows.some((row) => !!row.booking_id);
+      const hasCheckedInAttendance = rows.some((row) => !!row.checked_in_at);
       const existingPTClientId = rows[0]?.client_id?.toString();
+
+      if (hasClientBooking) {
+        return Alert.alert('Client Booking Locked', 'Cancel the member booking before changing this PT session.');
+      }
 
       if (hasCheckedInAttendance && existingPTClientId !== selectedClient.id) {
         return Alert.alert('Undo Check-In First', 'Undo the PT check-in before assigning this session to another client.');
@@ -513,6 +614,14 @@ export default function HomeScreen() {
           client_id: selectedClient.id,
         });
         if (attendanceErr) Alert.alert("Attendance Error", attendanceErr.message);
+      }
+
+      if (selectedAvailabilityId) {
+        try {
+          await removeCoachAvailability(selectedAvailabilityId);
+        } catch (error) {
+          Alert.alert('Availability Cleanup Failed', error instanceof Error ? error.message : 'Remove the published slot manually.');
+        }
       }
     }
 
@@ -566,6 +675,10 @@ export default function HomeScreen() {
   );
 
   const getRosterStatusDisplay = (item: RosterItem) => {
+    if (item.status === 'reserved') {
+      return { label: 'Reserved', textColor: theme.success, backgroundColor: theme.backgroundElement };
+    }
+
     if (item.status === 'first_class') {
       return { label: 'First class', textColor: theme.success, backgroundColor: theme.backgroundElement };
     }
@@ -598,20 +711,26 @@ export default function HomeScreen() {
       <TouchableOpacity
         activeOpacity={0.75}
         onPress={() => handleAvailableSlotPress(item)}
-        accessibilityLabel={`Book available slot at ${item.time}`}
+        onLongPress={() => handleAvailabilityLongPress(item)}
+        accessibilityLabel={`${item.published ? 'Published client availability' : 'Available slot'} at ${item.time}`}
       >
         <ThemedView
           type="surface"
           style={[
             styles.classCard,
             styles.availableCard,
-            { backgroundColor: theme.background, borderColor: theme.surface },
+            { backgroundColor: theme.background, borderColor: item.published ? theme.primary : theme.surface },
           ]}
         >
           <View style={[styles.timeContainer, { borderRightColor: theme.backgroundElement }]}>
             <ThemedText numberOfLines={1} style={[styles.timeText, { color: theme.success }]}>{item.time}</ThemedText>
           </View>
-          <View style={styles.detailsContainer} />
+          <View style={styles.detailsContainer}>
+            <ThemedText style={styles.classTitle}>{item.published ? 'Client-bookable PT' : 'Available'}</ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.availableHint}>
+              {item.published ? 'Hold to unpublish' : 'Hold to publish for clients'}
+            </ThemedText>
+          </View>
         </ThemedView>
       </TouchableOpacity>
     </View>
@@ -792,7 +911,6 @@ export default function HomeScreen() {
         </BottomSheetScrollView>
       </BottomSheetModal>
 
-      {/* 2. Group Class Roster Modal (Still Mocked) */}
       {/* 2. Group Class Roster Modal */}
       <BottomSheetModal ref={rosterSheetRef} index={0} snapPoints={rosterSnapPoints} backdropComponent={renderBackdrop} backgroundStyle={{ backgroundColor: theme.backgroundElement }} handleIndicatorStyle={{ backgroundColor: theme.textSecondary }} {...bottomSheetKeyboardProps}>
         <BottomSheetView style={styles.sheetContent}>
@@ -905,6 +1023,20 @@ export default function HomeScreen() {
                     >
                       <AppSymbol name="arrow.uturn.backward" size={14} tintColor={theme.primary} />
                     </TouchableOpacity>
+                  ) : item.status === 'reserved' ? (
+                    <TouchableOpacity
+                      style={[styles.rosterCheckInButton, { backgroundColor: theme.primary }]}
+                      onPress={() => handleReservationCheckIn(item)}
+                      disabled={!!rosterActionClientId}
+                      activeOpacity={0.7}
+                      accessibilityLabel={`Check in ${item.name}`}
+                    >
+                      {rosterActionClientId === item.clientId ? (
+                        <ActivityIndicator size="small" color={theme.onPrimary} />
+                      ) : (
+                        <ThemedText style={[styles.rosterCheckInText, { color: theme.onPrimary }]}>Check In</ThemedText>
+                      )}
+                    </TouchableOpacity>
                   ) : null}
                 </View>
               )}
@@ -944,6 +1076,7 @@ const styles = StyleSheet.create({
   timeText: { fontSize: 15, fontWeight: '700' },
   detailsContainer: { flex: 1 },
   classTitle: { fontSize: 15, fontWeight: '600', marginBottom: 2 },
+  availableHint: { fontSize: 11, lineHeight: 14, fontWeight: '600' },
 
   cardActionContainer: { justifyContent: 'center', alignItems: 'flex-end', minWidth: 48 },
   cardActionContainerBadge: { justifyContent: 'flex-start', alignSelf: 'stretch', minWidth: 30 },
@@ -983,6 +1116,8 @@ const styles = StyleSheet.create({
   rosterStatusPill: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginTop: 4 },
   rosterStatusText: { fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
   rosterUndoButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  rosterCheckInButton: { minWidth: 78, minHeight: 34, borderRadius: Spacing.two, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  rosterCheckInText: { fontSize: 12, lineHeight: 15, fontWeight: '900' },
   rosterEmptyText: { textAlign: 'center', marginTop: Spacing.four },
   rosterRefreshBadge: { position: 'absolute', top: 8, right: 0, width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   rosterSkeletonList: { paddingBottom: Spacing.six },

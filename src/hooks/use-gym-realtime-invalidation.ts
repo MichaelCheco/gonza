@@ -2,9 +2,10 @@ import { QueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import { gymQueryKeys } from '@/lib/gym-queries';
+import { clientQueryKeys } from '@/lib/client-queries';
 import { supabase } from '../../utils/supabase';
 
-const REALTIME_TABLES = ['clients', 'client_packages', 'classes', 'attendance', 'packages'] as const;
+const REALTIME_TABLES = ['clients', 'client_packages', 'classes', 'attendance', 'packages', 'bookings', 'coach_availability'] as const;
 
 export function useGymRealtimeInvalidation(queryClient: QueryClient, enabled: boolean) {
   useEffect(() => {
@@ -17,6 +18,8 @@ export function useGymRealtimeInvalidation(queryClient: QueryClient, enabled: bo
         'postgres_changes',
         { event: '*', schema: 'public', table },
         () => {
+          queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+
           if (table === 'clients' || table === 'client_packages') {
             queryClient.invalidateQueries({ queryKey: gymQueryKeys.clients });
           }

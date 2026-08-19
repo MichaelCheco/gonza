@@ -18,6 +18,7 @@ export type ClientRecord = {
   last_name: string;
   phone: string | null;
   instagram_handle: string | null;
+  email?: string | null;
   name: string;
   client_packages: ClientPackageRow[];
   packageSummaries: ServiceSummary[];
@@ -51,6 +52,12 @@ export type SessionType = {
   checkedIn?: boolean;
 };
 
+export type CoachAvailabilitySlot = {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+};
+
 export type RosterItem = {
   id: string;
   clientId: string;
@@ -62,7 +69,7 @@ export type RosterItem = {
   status: RosterStatus;
 };
 
-export type RosterStatus = 'checked_in' | 'last_class' | 'first_class' | 'no_active_package' | 'already_checked_in';
+export type RosterStatus = 'reserved' | 'checked_in' | 'last_class' | 'first_class' | 'no_active_package' | 'already_checked_in';
 
 const SERVICE_ORDER = [SERVICE_TYPES.GROUP, SERVICE_TYPES.PERSONAL_TRAINING];
 
@@ -76,6 +83,8 @@ export const gymQueryKeys = {
   clientClassHistory: (clientId: string | number | null | undefined) => ['gym', 'client-class-history', clientId?.toString() ?? 'none'] as const,
   rosters: ['gym', 'rosters'] as const,
   roster: (classId: string | null | undefined) => ['gym', 'rosters', classId ?? 'none'] as const,
+  coachAvailability: ['gym', 'coach-availability'] as const,
+  coachAvailabilityByDate: (date: string) => ['gym', 'coach-availability', date] as const,
 };
 
 export function decorateClient(client: any): ClientRecord {
@@ -129,10 +138,10 @@ export async function fetchClients(): Promise<ClientRecord[]> {
   const { data, error } = await supabase
     .from('clients')
     .select(`
-      id, first_name, last_name, phone, instagram_handle,
+      id, first_name, last_name, phone, instagram_handle, email,
       client_packages (
         id, client_id, package_id, classes_remaining, start_date, expiration_date, payment_status,
-        packages ( id, name, price, total_classes, expires_in_weeks, service_type, is_unlimited )
+        packages ( id, name, price, total_classes, expires_in_weeks, service_type, is_unlimited, package_kind )
       )
     `)
     .order('first_name', { ascending: true });
@@ -155,7 +164,7 @@ export async function fetchClientClassHistory(clientId: string | number): Promis
       )
     `)
     .eq('client_id', clientId)
-    .not('client_package_id', 'is', null);
+    .not('checked_in_at', 'is', null);
 
   if (error) throw error;
 
@@ -215,6 +224,7 @@ export async function fetchClassesByDate(selectedDate: string): Promise<SessionT
       start_time,
       attendance (
         client_package_id,
+        checked_in_at,
         client_id,
         clients (id, first_name, last_name)
       )
@@ -234,9 +244,54 @@ export async function fetchClassesByDate(selectedDate: string): Promise<SessionT
       title: isPT && firstAttendee ? `${firstAttendee.first_name} ${firstAttendee.last_name}` : session.title,
       type: session.class_type,
       clientId: firstAttendee?.id?.toString(),
-      checkedIn: !!session.attendance?.[0]?.client_package_id,
+      checkedIn: !!session.attendance?.[0]?.checked_in_at,
     };
   });
+}
+
+export async function fetchCoachAvailabilityByDate(selectedDate: string): Promise<CoachAvailabilitySlot[]> {
+  const startAt = dayjs(selectedDate).startOf('day');
+  const endAt = startAt.add(1, 'day');
+  const { data, error } = await supabase
+    .from('coach_availability')
+    .select('id, starts_at, ends_at')
+    .eq('status', 'available')
+    .gte('starts_at', startAt.toISOString())
+    .lt('starts_at', endAt.toISOString())
+    .order('starts_at', { ascending: true });
+
+  if (error) throw error;
+
+  return (data ?? []).map((slot) => ({
+    id: slot.id.toString(),
+    startsAt: slot.starts_at,
+    endsAt: slot.ends_at,
+  }));
+}
+
+export async function publishCoachAvailability(
+  coachUserId: string,
+  startsAt: string,
+  endsAt: string
+): Promise<void> {
+  const { error } = await supabase.from('coach_availability').insert({
+    coach_user_id: coachUserId,
+    starts_at: startsAt,
+    ends_at: endsAt,
+    status: 'available',
+  });
+
+  if (error) throw error;
+}
+
+export async function removeCoachAvailability(slotId: string): Promise<void> {
+  const { error } = await supabase
+    .from('coach_availability')
+    .delete()
+    .eq('id', slotId)
+    .eq('status', 'available');
+
+  if (error) throw error;
 }
 
 export async function fetchRoster(classId: string): Promise<RosterItem[]> {
@@ -246,6 +301,8 @@ export async function fetchRoster(classId: string): Promise<RosterItem[]> {
       id,
       client_id,
       client_package_id,
+      booking_id,
+      checked_in_at,
       clients ( id, first_name, last_name ),
       client_packages (
         id,
@@ -263,8 +320,12 @@ export async function fetchRoster(classId: string): Promise<RosterItem[]> {
     const clientPackage = Array.isArray(clientPackageData) ? clientPackageData[0] : clientPackageData;
     const remainingAfter = typeof clientPackage?.classes_remaining === 'number' ? clientPackage.classes_remaining : null;
     const isUnlimited = isUnlimitedPackage(clientPackage?.packages);
-    const checkedIn = !!attendanceRow.client_package_id;
-    let status: RosterStatus = checkedIn ? 'checked_in' : 'no_active_package';
+    const checkedIn = !!attendanceRow.checked_in_at;
+    let status: RosterStatus = attendanceRow.booking_id && !checkedIn
+      ? 'reserved'
+      : checkedIn
+        ? 'checked_in'
+        : 'no_active_package';
 
     if (checkedIn && isFirstClassFreePackage(clientPackage?.packages)) {
       status = 'first_class';

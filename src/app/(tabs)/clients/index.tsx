@@ -74,6 +74,7 @@ export default function ClientsScreen() {
   const [selectedPackageId, setSelectedPackageId] = useState<number | null>(null);
 
   const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [instagramHandle, setInstagramHandle] = useState('');
   const [phoneCopied, setPhoneCopied] = useState(false);
@@ -231,6 +232,7 @@ export default function ClientsScreen() {
   const handleAddClient = () => {
     setEditingClientId(null);
     setFullName('');
+    setEmail('');
     setPhone('');
     setInstagramHandle('');
     setPhoneCopied(false);
@@ -245,6 +247,7 @@ export default function ClientsScreen() {
   const handleClientPress = (client: ClientRecord) => {
     setEditingClientId(client.id);
     setFullName(client.name);
+    setEmail(client.email ?? '');
     setPhone(formatPhoneNumber(client.phone));
     setInstagramHandle(formatInstagramHandle(client.instagram_handle));
     setPhoneCopied(false);
@@ -393,6 +396,14 @@ export default function ClientsScreen() {
     if (!trimmedName) return Alert.alert('Error', 'Please enter a name.');
     const formattedPhone = formatPhoneNumber(phone);
     const normalizedInstagramHandle = normalizeInstagramHandle(instagramHandle);
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (normalizedEmail && clients.some((client) => (
+      client.id !== editingClient?.id
+      && client.email?.trim().toLowerCase() === normalizedEmail
+    ))) {
+      return Alert.alert('Email Already Used', 'Each member login needs a unique client email.');
+    }
 
     const [firstName, ...lastNameArr] = trimmedName.split(/\s+/);
     const lastName = lastNameArr.join(' ');
@@ -400,7 +411,13 @@ export default function ClientsScreen() {
     if (editingClient) {
       const { error } = await supabase
         .from('clients')
-        .update({ first_name: firstName, last_name: lastName, phone: formattedPhone || null, instagram_handle: normalizedInstagramHandle })
+        .update({
+          first_name: firstName,
+          last_name: lastName,
+          email: normalizedEmail || null,
+          phone: formattedPhone || null,
+          instagram_handle: normalizedInstagramHandle,
+        })
         .eq('id', editingClient.id);
 
       if (error) Alert.alert('Error', error.message);
@@ -414,7 +431,13 @@ export default function ClientsScreen() {
 
     const { data: newClient, error: clientErr } = await supabase
       .from('clients')
-      .insert({ first_name: firstName, last_name: lastName, phone: formattedPhone || null, instagram_handle: normalizedInstagramHandle })
+      .insert({
+        first_name: firstName,
+        last_name: lastName,
+        email: normalizedEmail || null,
+        phone: formattedPhone || null,
+        instagram_handle: normalizedInstagramHandle,
+      })
       .select()
       .single();
 
@@ -931,6 +954,18 @@ export default function ClientsScreen() {
               style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
               value={fullName}
               onChangeText={setFullName}
+              placeholderTextColor={theme.textSecondary}
+            />
+
+            <ThemedText themeColor="textSecondary" style={styles.inputLabel}>Member Email</ThemedText>
+            <BottomSheetTextInput
+              style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.background }]}
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="member@example.com"
               placeholderTextColor={theme.textSecondary}
             />
 

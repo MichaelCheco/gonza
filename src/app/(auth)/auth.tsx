@@ -20,12 +20,13 @@ import { useAuth } from '@/providers/auth-provider';
 export default function AuthScreen() {
     const theme = useTheme();
     const insets = useSafeAreaInsets();
-    const { status, message, signInWithEmail, clearAuthMessage } = useAuth();
+    const { status, message, signInWithEmail, signUpWithEmail, clearAuthMessage } = useAuth();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [creatingAccount, setCreatingAccount] = useState(false);
     const [submitting, setSubmitting] = useState(false);
 
-    const checkingAccess = status === 'checkingAdmin';
+    const checkingAccess = status === 'checkingAccess';
     const busy = submitting || checkingAccess;
     const hasCredentials = email.trim().length > 0 && password.length > 0;
     const canSubmit = hasCredentials && !busy;
@@ -40,12 +41,21 @@ export default function AuthScreen() {
         if (message) clearAuthMessage();
     };
 
-    const handleSignIn = async () => {
+    const handleSubmit = async () => {
         if (!canSubmit) return;
 
         setSubmitting(true);
-        await signInWithEmail(email, password);
+        if (creatingAccount) {
+            await signUpWithEmail(email, password);
+        } else {
+            await signInWithEmail(email, password);
+        }
         setSubmitting(false);
+    };
+
+    const toggleMode = () => {
+        setCreatingAccount((current) => !current);
+        if (message) clearAuthMessage();
     };
 
     return (
@@ -67,7 +77,9 @@ export default function AuthScreen() {
                             <View style={styles.header}>
                                 <ThemedText style={styles.title}>Gonza Boxing</ThemedText>
                                 <ThemedText themeColor="textSecondary" style={styles.subtitle}>
-                                    Owner test access for the gym schedule and client roster.
+                                    {creatingAccount
+                                        ? 'Create your member login using the email on your gym profile.'
+                                        : 'Sign in to manage the gym or book your next session.'}
                                 </ThemedText>
                             </View>
 
@@ -78,7 +90,7 @@ export default function AuthScreen() {
                                         style={[styles.input, { borderColor: theme.surface, color: theme.text, backgroundColor: theme.backgroundElement }]}
                                         onChangeText={handleEmailChange}
                                         value={email}
-                                        placeholder="owner@example.com"
+                                        placeholder="you@example.com"
                                         placeholderTextColor={theme.textSecondary}
                                         autoCapitalize="none"
                                         autoCorrect={false}
@@ -99,10 +111,10 @@ export default function AuthScreen() {
                                         placeholderTextColor={theme.textSecondary}
                                         secureTextEntry
                                         autoCapitalize="none"
-                                        textContentType="password"
+                                        textContentType={creatingAccount ? 'newPassword' : 'password'}
                                         editable={!busy}
                                         returnKeyType="go"
-                                        onSubmitEditing={handleSignIn}
+                                        onSubmitEditing={handleSubmit}
                                     />
                                 </View>
 
@@ -116,7 +128,7 @@ export default function AuthScreen() {
 
                                 {checkingAccess && (
                                     <ThemedText themeColor="textSecondary" style={styles.statusText}>
-                                        Checking owner access...
+                                        Checking account access...
                                     </ThemedText>
                                 )}
 
@@ -126,21 +138,32 @@ export default function AuthScreen() {
                                         { backgroundColor: hasCredentials ? theme.primary : theme.backgroundSelected },
                                     ]}
                                     disabled={!canSubmit}
-                                    onPress={handleSignIn}
+                                    onPress={handleSubmit}
                                     activeOpacity={0.8}
                                 >
                                     {busy ? (
                                         <ActivityIndicator size="small" color={hasCredentials ? theme.onPrimary : theme.textSecondary} />
                                     ) : (
                                         <ThemedText style={[styles.buttonText, { color: hasCredentials ? theme.onPrimary : theme.textSecondary }]}>
-                                            Sign In
+                                            {creatingAccount ? 'Create Member Account' : 'Sign In'}
                                         </ThemedText>
                                     )}
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    disabled={busy}
+                                    onPress={toggleMode}
+                                    activeOpacity={0.7}
+                                    style={styles.modeButton}
+                                >
+                                    <ThemedText style={[styles.modeButtonText, { color: theme.primary }]}>
+                                        {creatingAccount ? 'Already have an account? Sign in' : 'New member? Create an account'}
+                                    </ThemedText>
                                 </TouchableOpacity>
                             </View>
 
                             <ThemedText themeColor="textSecondary" style={styles.ownerOnlyText}>
-                                Need access? Ask the app owner to add your Supabase Auth user to the app_admins allowlist.
+                                Member accounts must use the same email address saved by the gym.
                             </ThemedText>
                         </View>
                     </ScrollView>
@@ -179,5 +202,7 @@ const styles = StyleSheet.create({
     statusText: { fontSize: 13, textAlign: 'center' },
     button: { minHeight: 48, borderRadius: Spacing.two, alignItems: 'center', justifyContent: 'center' },
     buttonText: { fontWeight: '700', fontSize: 16 },
+    modeButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center' },
+    modeButtonText: { fontWeight: '700', fontSize: 14 },
     ownerOnlyText: { marginTop: Spacing.four, fontSize: 12, lineHeight: 17, textAlign: 'center' },
 });
